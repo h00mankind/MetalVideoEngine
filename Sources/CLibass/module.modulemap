@@ -1,0 +1,8 @@
+module CLibass [system] {
+    // Resolved via pkg-config (`pkgConfig: "libass"` in Package.swift) or
+    // the MVE_LIBASS_PREFIX env var. Never hard-code an absolute header
+    // path here — that breaks Intel Macs, non-Homebrew installs, and CI.
+    header "shim.h"
+    link "ass"
+    export *
+}

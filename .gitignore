@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+.netrc
+.DS_Store
+*.dSYM
+node_modules/
