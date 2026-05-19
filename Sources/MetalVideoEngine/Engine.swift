@@ -129,6 +129,12 @@ public final class RenderEngine {
         let started = Date()
 
         let decoder = try VideoDecoder(url: req.inputURL)
+        // Tell consumers (Node bridge, scripts) the total source duration
+        // before any frame line fires. They need this to compute a real
+        // progress ratio — without it the only signal is the per-frame
+        // PTS, which has no denominator. Format is intentionally narrow
+        // so the bridge regex is unambiguous.
+        log(String(format: "[meta] sourceSecs=%.3f", CMTimeGetSeconds(decoder.duration)))
         let frameRate = Int(decoder.nominalFrameRate.rounded())
         let fps = frameRate > 0 ? frameRate : 30
 

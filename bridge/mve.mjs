@@ -65,15 +65,24 @@ export async function binaryAvailable() {
 }
 
 /**
- * Engine stderr emits two kinds of lines we care about:
+ * Engine stderr emits three lines we care about:
  *
+ *   [meta] sourceSecs=136.486
  *   [engine] frame 3600  src=119.97s  wall=18.41s  speed=6.50x
  *   [done] frames=4080  src=136.49s  wall=20.81s  speed=6.53x
  *
- * The frame line gives a steady progress signal; the done line is the
- * terminal stats blob. Anything else is informational and passed through
- * onLog unmodified.
+ * The meta line fires once, before the first frame, with the total
+ * source duration — the only reliable denominator for the progress
+ * ratio. The frame line gives a steady current-PTS signal; the done
+ * line is the terminal stats blob. Anything else is informational and
+ * passed through onLog unmodified.
+ *
+ * Older engine binaries (< v0.1.2) don't emit the meta line. We
+ * preserve the previous "running-max as denominator" fallback so the
+ * bridge still works against them, even though the ratio in that mode
+ * pins at 1.0 once the first frame fires.
  */
+const META_RE = /^\[meta\] sourceSecs=([\d.]+)/;
 const FRAME_RE = /^\[engine\] frame (\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed=([\d.]+)x/;
 const DONE_RE = /^\[done\] frames=(\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed=([\d.]+)x/;
 
@@ -86,12 +95,13 @@ export async function runMetalRender(spec, events = {}) {
   const specPath = path.join(tmpDir, 'job.json');
   await writeFile(specPath, JSON.stringify(spec, null, 2), 'utf8');
 
-  // Estimate source duration up front so we can synthesise a progress
-  // ratio. We don't have ffprobe here on the Metal side, but the engine
-  // emits its own `src=Xs` field on every frame line — we treat the
-  // highest seen value as the running estimate of total source secs and
-  // ratio it against the source seconds line, normalised to 1 at done.
+  // Source-duration denominator for onProgress. Preferred path: the
+  // engine prints `[meta] sourceSecs=N` once, before the first frame.
+  // Fallback (older binaries): running-max of seen PTS, which gives a
+  // monotonic-but-pinned-at-1 ratio. Tracked separately so we can use
+  // the meta value the moment it arrives without overwriting it later.
   let lastSourceSecs = 0;
+  let metaSourceSecs = 0;
   let totalSourceEstimate = 0;
   let finalStats = null;
 
@@ -107,18 +117,24 @@ export async function runMetalRender(spec, events = {}) {
       stderrBuffer = parts.pop() ?? '';
       for (const line of parts) {
         if (!line) continue;
+        const m = META_RE.exec(line);
+        if (m) {
+          metaSourceSecs = parseFloat(m[1]);
+        }
         const f = FRAME_RE.exec(line);
         if (f) {
           const src = parseFloat(f[2]);
           lastSourceSecs = src;
           if (src > totalSourceEstimate) totalSourceEstimate = src;
-          if (events.onProgress && totalSourceEstimate > 0) {
-            // Conservative ratio that monotonically approaches 1 — the
-            // engine's `src=` field is the *current* PTS, not the
-            // total, so we can't divide by anything but the running
-            // max. Caller gets the source seconds for free as the
-            // second argument, in case it wants its own normalisation.
-            events.onProgress(Math.min(1, src / Math.max(1, totalSourceEstimate)), src);
+          if (events.onProgress) {
+            // Prefer the engine-reported total (denominator never moves,
+            // ratio actually represents progress). Fall back to the
+            // running-max heuristic for older engine binaries that
+            // don't print a meta line.
+            const denom = metaSourceSecs > 0 ? metaSourceSecs : totalSourceEstimate;
+            if (denom > 0) {
+              events.onProgress(Math.min(1, src / denom), src);
+            }
           }
         }
         const d = DONE_RE.exec(line);

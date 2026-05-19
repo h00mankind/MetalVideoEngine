@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-05-20
+
+### Fixed
+- Progress ratio in `runMetalRender`'s `onProgress` callback now reports
+  real progress (climbs linearly 0→1) instead of pinning at 1.0 after
+  the first frame. The bridge previously used the running max of seen
+  PTS as the denominator, which equals the numerator.
+
+### Added
+- Engine emits a `[meta] sourceSecs=<float>` line once, before the
+  first frame line, so consumers have a real total-duration
+  denominator. The bridge prefers this when present and falls back to
+  the running-max heuristic for older engine binaries.
+
 ## [0.1.1] — 2026-05-20
 
 ### Added
