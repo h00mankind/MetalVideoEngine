@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-05-20
+
+### Added
+- npm package surface — `metal-video-engine` ships `bridge/mve.mjs` +
+  `bridge/mve.d.ts` and a postinstall script that downloads the
+  matching darwin-arm64 binary from the GitHub Release. Consumers can
+  now `npm install github:h00mankind/MetalVideoEngine#v0.1.1` and
+  `import { runMetalRender } from 'metal-video-engine'`.
+- `MVE_SKIP_DOWNLOAD=1` env var for CI hosts that supply the binary
+  out of band.
+
+### Changed
+- `bridge/mve.ts` removed; `bridge/mve.mjs` is the source of truth and
+  `bridge/mve.d.ts` carries hand-written types. Public API:
+  `runMetalRender`, `binaryPath`, `binaryAvailable`.
+
 ## [0.1.0] — 2026-05-19
 
 Initial extraction from the Revver-recap research sandbox.
