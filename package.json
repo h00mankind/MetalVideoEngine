@@ -1,0 +1,55 @@
+{
+  "name": "metal-video-engine",
+  "version": "0.1.0",
+  "description": "GPU-resident video render pipeline for Apple Silicon — Metal + libass + VideoToolbox, with a Node bridge.",
+  "type": "module",
+  "main": "./bridge/mve.mjs",
+  "types": "./bridge/mve.d.ts",
+  "exports": {
+    ".": {
+      "types": "./bridge/mve.d.ts",
+      "import": "./bridge/mve.mjs"
+    }
+  },
+  "files": [
+    "bridge/mve.mjs",
+    "bridge/mve.d.ts",
+    "scripts/postinstall.mjs",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "bin": {
+    "mve": "./bin/mve"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.mjs"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h00mankind/MetalVideoEngine.git"
+  },
+  "homepage": "https://github.com/h00mankind/MetalVideoEngine",
+  "bugs": {
+    "url": "https://github.com/h00mankind/MetalVideoEngine/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "video",
+    "render",
+    "metal",
+    "apple-silicon",
+    "libass",
+    "videotoolbox",
+    "ffmpeg-alternative"
+  ]
+}

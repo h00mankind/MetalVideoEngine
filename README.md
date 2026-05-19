@@ -55,6 +55,29 @@ interchange, scopes, ProRes decoding, color management beyond Rec.709.
 
 ## Install
 
+### As an npm package (Node consumers)
+
+```sh
+npm install metal-video-engine
+```
+
+The package's `postinstall` script downloads a prebuilt `mve` binary
+matching the package version from the [GitHub Release](https://github.com/h00mankind/MetalVideoEngine/releases)
+into `node_modules/metal-video-engine/bin/mve`. Use the bridge:
+
+```ts
+import { runMetalRender, binaryPath, binaryAvailable } from 'metal-video-engine';
+
+if (await binaryAvailable()) {
+  await runMetalRender(spec, { onLog, onProgress });
+}
+```
+
+Skip the download (e.g. on CI hosts that provide the binary out of
+band) with `MVE_SKIP_DOWNLOAD=1`. Override the resolved binary path with
+`MVE_BIN=/abs/path`. The package is gated to `darwin-arm64` via npm's
+`os` / `cpu` fields — installing on Linux or Intel is a no-op.
+
 ### As a SwiftPM dependency
 
 ```swift
@@ -65,11 +88,7 @@ interchange, scopes, ProRes decoding, color management beyond Rec.709.
 .product(name: "MetalVideoEngine", package: "MetalVideoEngine")
 ```
 
-### As a CLI (`mve`)
-
-Download the latest release for `darwin-arm64` from
-[Releases](https://github.com/h00mankind/MetalVideoEngine/releases), or
-build from source:
+### Building from source / using the CLI directly
 
 ```sh
 git clone https://github.com/h00mankind/MetalVideoEngine.git

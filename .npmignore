@@ -1,0 +1,17 @@
+# Swift source — published via GitHub, not npm.
+Sources/
+Package.swift
+Package.resolved
+.build/
+.swiftpm/
+.github/
+
+# Bench + git tooling not useful inside an installed package.
+bench.sh
+.gitignore
+
+# Source of truth for the bridge is bridge/mve.mjs; don't include the
+# (now-removed) .ts variant or anything else not listed in package.json
+# "files". `files` is allow-list — this .npmignore is belt-and-braces.
+bridge/*.ts
+!bridge/mve.d.ts
