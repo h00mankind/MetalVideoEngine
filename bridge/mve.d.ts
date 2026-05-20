@@ -65,6 +65,8 @@ export type MetalText = {
   shadow?: boolean;
   bgColorHex?: string;
   bgOpacity?: number;
+  /** Pill corner radius in PlayRes px. Default 8. */
+  bgRadius?: number;
 };
 
 export type MetalAudio = {

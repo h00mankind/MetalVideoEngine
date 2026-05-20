@@ -218,33 +218,50 @@ public enum Shaders {
                 alpha = (dstYNorm - (1.0 - band)) / band;
             }
             if (alpha > 0.001) {
-                // Small fixed 5-tap kernel; sigma controls radius. We
-                // pre-compute the weights inline rather than looping
-                // a full 2D NxN — that keeps the inner ALU low and
-                // matches the alpha-masked output quality the CPU path
-                // achieves with its downscale-then-blur trick.
-                float r = clamp(geom.edgeBlurSigma * 1.5, 1.0, 12.0);
-                float2 pixSize = 1.0 / geom.fitSize;
+                // Proper 2D Gaussian via the "stride" trick: a fixed
+                // (2*KERNEL_R+1)^2 tap grid whose spacing scales with
+                // sigma so the kernel always covers ~2σ in pixels. This
+                // is the same approach the ffmpeg/libplacebo edge-blur
+                // hook uses (buildEdgeBlurHook in grade.ts) and the CSS
+                // backdrop-filter:blur(sigma) the live preview uses —
+                // so all three paths read at the same visual strength.
+                //
+                // The previous 5-tap cross with radius capped at 12px was
+                // far weaker than a real gblur, so the preview (a true
+                // Gaussian) looked much blurrier than the render. A
+                // 13×13 grid at stride σ/KERNEL_R fixes the mismatch.
+                //
+                // Cost is bounded: this branch only runs on the top/
+                // bottom band pixels (a small fraction of the frame), and
+                // the tap count is constant regardless of sigma.
+                const int KERNEL_R = 6;             // → 13×13 = 169 taps
+                const float EFF_SIGMA = 3.0;        // falloff in tap units
+                // Stride in source-UV: cover ~2σ across KERNEL_R taps.
+                // sigma is in dst px; fitSize maps px → UV. Min 1px so a
+                // tiny sigma still spreads at least one pixel per tap.
+                float strideUV = max(geom.edgeBlurSigma / float(KERNEL_R), 1.0)
+                                 / geom.fitSize.x;
+                float strideUVy = max(geom.edgeBlurSigma / float(KERNEL_R), 1.0)
+                                  / geom.fitSize.y;
+                float twoSigSq = 2.0 * EFF_SIGMA * EFF_SIGMA;
                 float3 acc = float3(0.0);
                 float wsum = 0.0;
-                float2 offsets[5] = {
-                    float2( 0.0,  0.0),
-                    float2( r,   0.0),
-                    float2(-r,   0.0),
-                    float2( 0.0,  r),
-                    float2( 0.0, -r),
-                };
-                float weights[5] = { 1.0, 0.5, 0.5, 0.5, 0.5 };
-                for (int i = 0; i < 5; i++) {
-                    float2 sUV = applyBypassUV(fitUV + offsets[i] * pixSize,
-                                               geom.mirror, geom.zoom, geom.cropPct);
-                    float ys = ySrc.sample(bilinear, sUV).r;
-                    float2 cb = cbcrSrc.sample(bilinear, sUV).rg;
-                    float3 s = ycbcrToRGB(ys, cb);
-                    s = applyGrade(s, grade);
-                    s = applyLUT(s, lut, lutSamp, grade.lutMix);
-                    acc += s * weights[i];
-                    wsum += weights[i];
+                for (int dy = -KERNEL_R; dy <= KERNEL_R; dy++) {
+                    for (int dx = -KERNEL_R; dx <= KERNEL_R; dx++) {
+                        float d2 = float(dx * dx + dy * dy);
+                        float w = exp(-d2 / twoSigSq);
+                        float2 off = float2(float(dx) * strideUV,
+                                            float(dy) * strideUVy);
+                        float2 sUV = applyBypassUV(fitUV + off,
+                                                   geom.mirror, geom.zoom, geom.cropPct);
+                        float ys = ySrc.sample(bilinear, sUV).r;
+                        float2 cb = cbcrSrc.sample(bilinear, sUV).rg;
+                        float3 s = ycbcrToRGB(ys, cb);
+                        s = applyGrade(s, grade);
+                        s = applyLUT(s, lut, lutSamp, grade.lutMix);
+                        acc += s * w;
+                        wsum += w;
+                    }
                 }
                 float3 blurred = acc / wsum;
                 rgb = mix(rgb, blurred, alpha);

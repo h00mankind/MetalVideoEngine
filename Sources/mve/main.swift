@@ -313,7 +313,7 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
                       let c = JobHelpers.hexColor(cHex) else { return nil }
                 return Overlay.TextStyle.Background(
                     color: SIMD4(c.x, c.y, c.z, opa),
-                    cornerRadius: 8
+                    cornerRadius: CGFloat(t.bgRadius ?? 8)
                 )
             }()
             let style = Overlay.TextStyle(

@@ -45,8 +45,8 @@ public final class FilterGraph {
         public var colorTintRad: Float = 0     // hue rotation in radians
         public var noise: Float = 0            // 0..50
         public var grain: Float = 0            // 0..50
-        public var edgeBlurSigma: Float = 0    // 0..40
-        public var edgeBlurBand: Float = 0.12  // 0.04..0.50
+        public var edgeBlurSigma: Float = 0    // 0..100 (Gaussian sigma, dst px)
+        public var edgeBlurBand: Float = 0.12  // 0.04..0.50 fraction of dst.y per band
         public init() {}
     }
 

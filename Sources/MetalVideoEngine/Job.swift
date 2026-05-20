@@ -116,6 +116,7 @@ public struct JobSpec: Codable {
         public var shadow: Bool?
         public var bgColorHex: String?
         public var bgOpacity: Float?    // 0..1 — pill enabled when > 0
+        public var bgRadius: Float?     // pill corner radius, PlayRes px (default 8)
     }
 
     public struct AudioSpec: Codable {
