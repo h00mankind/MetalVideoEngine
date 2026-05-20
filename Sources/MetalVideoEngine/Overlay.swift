@@ -86,7 +86,12 @@ public enum Overlay {
         let dy = offset.y * ky
         let x = max(0, min(canvas.x - size.x, baseX + dx))
         let y = max(0, min(canvas.y - size.y, baseY + dy))
-        return SIMD2<Float>(x, y)
+        // Snap to whole pixels. Centred anchors produce fractional
+        // origins like (canvas.x - size.x)/2; compositing a 1:1 overlay
+        // raster at a fractional origin makes the sampler read between
+        // texels and blurs every edge. Rounding keeps the overlay
+        // texel-aligned with the destination so glyphs/logos stay crisp.
+        return SIMD2<Float>(x.rounded(), y.rounded())
     }
 
     // ── Image loading ──────────────────────────────────────────────────
@@ -258,6 +263,20 @@ public enum Overlay {
         ) else {
             throw MVEError.pipelineStateFailed("Overlay.rasterizeText: CGContext failed")
         }
+        // Crisp glyph rasterisation. Antialiasing on (smooth edges);
+        // font smoothing OFF so we get clean grayscale-AA coverage
+        // rather than CoreText's subpixel/font-smoothing dilation, which
+        // bloats stem weight against a transparent background and reads
+        // as a soft halo once composited. This matches what libass /
+        // ffmpeg drawtext produce: straight coverage AA.
+        cg.setShouldAntialias(true)
+        cg.setAllowsAntialiasing(true)
+        cg.setShouldSmoothFonts(false)
+        cg.setAllowsFontSmoothing(false)
+        cg.setShouldSubpixelPositionFonts(true)
+        cg.setShouldSubpixelQuantizeFonts(false)
+        cg.interpolationQuality = .high
+
         // Y-flip so the texture is top-down for the engine's sampler.
         cg.translateBy(x: 0, y: CGFloat(h))
         cg.scaleBy(x: 1, y: -1)

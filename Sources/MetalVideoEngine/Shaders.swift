@@ -324,7 +324,16 @@ public enum Shaders {
             dstPx.y >= params.rectOrigin.y + params.rectSize.y) {
             return;
         }
-        float2 uv = (dstPx - params.rectOrigin) / params.rectSize;
+        // Sample at TEXEL CENTRES: gid is an integer pixel index, so the
+        // pixel centre is gid + 0.5. With an integer-snapped rectOrigin
+        // and rectSize == the overlay's texel count (the 1:1 composite
+        // every static overlay uses), (gid - origin + 0.5)/rectSize lands
+        // exactly on each source texel centre, so the linear sampler
+        // returns the texel verbatim with no interpolation. Without the
+        // +0.5 the sample fell on texel *edges* and bilinear-blended two
+        // neighbours, softening every glyph/logo edge — that was the
+        // "not crisp vs ffmpeg" blur.
+        float2 uv = (dstPx - params.rectOrigin + 0.5) / params.rectSize;
         // Sweep clip: drop fragments past clipRight in U space. The
         // anti-aliased edge falls naturally on word/glyph boundaries
         // when callers align word x-positions to the same grid as the

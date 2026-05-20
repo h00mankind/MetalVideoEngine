@@ -18,6 +18,19 @@ func usage() -> Never {
       mve job <spec.json>
       mve frame <spec.json>     (spec.frame.{atSeconds, outPath} required)
       mve libass --ass <path> --time-ms <int> --out <png> [--w 1080 --h 1920]
+      mve text --text <str> --out <png> [text options]
+
+    TEXT PROBE (visually test CoreText rasterisation params → PNG):
+      mve text --text "PART 1" --out /tmp/t.png \\
+               [--font "Helvetica"] [--size 80] [--color ffffff]
+               [--bold 0|1] [--shadow 0|1]
+               [--bg 000000] [--bg-opacity 0..1] [--radius 8]
+               [--bgfill checker|RRGGBB]   (canvas behind the raster;
+                                            default transparent. 'checker'
+                                            makes AA edges easy to see.)
+      Rasterises one line through the exact production
+      Overlay.rasterizeText path and writes a PNG — eyeball glyph
+      crispness, shadow, pill geometry and AA without a full render.
 
     RENDER OPTIONS (one-shot CLI):
       --in <path>          input video (mp4/mov)
@@ -73,6 +86,7 @@ case "render": runOneShot(argv: argv)
 case "job":    runJob(argv: argv)
 case "frame":  runFrame(argv: argv)
 case "libass": runLibassProbe(argv: argv)
+case "text":   runTextProbe(argv: argv)
 default:       usage()
 }
 
@@ -453,5 +467,117 @@ func runLibassProbe(argv: [String]) {
         exit(1)
     }
     logLine("[libass] wrote \(outPath) (\(f.width)x\(f.height) BGRA, time_ms=\(timeMs))")
+    exit(0)
+}
+
+// MARK: - text probe (CoreText rasterisation → PNG)
+
+/// Rasterise one line of text through the exact production path
+/// (`Overlay.rasterizeText`) and write it to a PNG so font / size /
+/// shadow / pill / AA params can be eyeballed without a video render.
+///
+/// `--bgfill` paints a backdrop behind the (transparent) raster so the
+/// anti-aliased edges are visible: `checker` draws an 8px checkerboard,
+/// or pass an `RRGGBB` hex for a solid fill. Omit for a transparent PNG.
+func runTextProbe(argv: [String]) {
+    guard let text = arg("--text", argv), let outPath = arg("--out", argv) else { usage() }
+    guard let device = MTLCreateSystemDefaultDevice() else {
+        FileHandle.standardError.write(Data("text: no Metal device\n".utf8))
+        exit(1)
+    }
+
+    // Register a font file if the name looks like a path; otherwise the
+    // CoreText name resolver handles system families (e.g. "Helvetica").
+    let fontName = arg("--font", argv) ?? "Helvetica"
+    if fontName.contains("/"), !Fonts.register(path: fontName) {
+        logLine("[text] warning: could not register font file \(fontName)")
+    }
+    let size = CGFloat(Double(arg("--size", argv) ?? "") ?? 80)
+    let color = JobHelpers.hexColor(arg("--color", argv)) ?? SIMD4(1, 1, 1, 1)
+    let bold = (arg("--bold", argv) ?? "1") != "0"
+    let shadow = (arg("--shadow", argv) ?? "1") != "0"
+
+    var bg: Overlay.TextStyle.Background? = nil
+    if let bgHex = arg("--bg", argv),
+       let opaStr = arg("--bg-opacity", argv), let opa = Float(opaStr), opa > 0,
+       let c = JobHelpers.hexColor(bgHex) {
+        let radius = CGFloat(Double(arg("--radius", argv) ?? "") ?? 8)
+        bg = Overlay.TextStyle.Background(color: SIMD4(c.x, c.y, c.z, opa), cornerRadius: radius)
+    }
+
+    let style = Overlay.TextStyle(
+        fontName: fontName, fontSize: size, color: color,
+        bold: bold, shadow: shadow, background: bg
+    )
+
+    let tex: MTLTexture
+    do {
+        tex = try Overlay.rasterizeText(text, style: style, device: device)
+    } catch {
+        FileHandle.standardError.write(Data("text: rasterize failed: \(error)\n".utf8))
+        exit(1)
+    }
+
+    // Read the texture back to a BGRA buffer (premultiplied-first +
+    // little-endian — the same layout the overlay shader composites).
+    let w = tex.width, h = tex.height
+    let bytesPerRow = w * 4
+    var pixels = [UInt8](repeating: 0, count: h * bytesPerRow)
+    pixels.withUnsafeMutableBytes { ptr in
+        tex.getBytes(ptr.baseAddress!, bytesPerRow: bytesPerRow,
+                     from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+    }
+
+    // Optional backdrop so AA edges are visible. We composite the raster
+    // OVER the backdrop in straight (premultiplied) src-over.
+    if let fill = arg("--bgfill", argv) {
+        let checker = fill.lowercased() == "checker"
+        let solid = checker ? nil : JobHelpers.hexColor(fill)
+        for y in 0..<h {
+            for x in 0..<w {
+                let off = y * bytesPerRow + x * 4
+                let sB = Float(pixels[off + 0]), sG = Float(pixels[off + 1])
+                let sR = Float(pixels[off + 2]), sA = Float(pixels[off + 3]) / 255
+                // Backdrop colour (already-straight 0..255).
+                let (bR, bG, bB): (Float, Float, Float)
+                if checker {
+                    let v: Float = ((x / 8) + (y / 8)) % 2 == 0 ? 90 : 160
+                    (bR, bG, bB) = (v, v, v)
+                } else if let s = solid {
+                    (bR, bG, bB) = (s.x * 255, s.y * 255, s.z * 255)
+                } else {
+                    (bR, bG, bB) = (0, 0, 0)
+                }
+                // src is premultiplied; out = src + bg*(1-a).
+                pixels[off + 0] = UInt8(min(255, sB + bB * (1 - sA)))
+                pixels[off + 1] = UInt8(min(255, sG + bG * (1 - sA)))
+                pixels[off + 2] = UInt8(min(255, sR + bR * (1 - sA)))
+                pixels[off + 3] = 255
+            }
+        }
+    }
+
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let bm = CGBitmapInfo(rawValue:
+        CGImageAlphaInfo.premultipliedFirst.rawValue
+        | CGBitmapInfo.byteOrder32Little.rawValue)
+    guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+          let cg = CGImage(
+            width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: bytesPerRow, space: cs, bitmapInfo: bm,
+            provider: provider, decode: nil,
+            shouldInterpolate: false, intent: .defaultIntent),
+          let dst = CGImageDestinationCreateWithURL(
+            URL(fileURLWithPath: outPath) as CFURL,
+            UTType.png.identifier as CFString, 1, nil) else {
+        FileHandle.standardError.write(Data("text: PNG encode failed\n".utf8))
+        exit(1)
+    }
+    CGImageDestinationAddImage(dst, cg, nil)
+    guard CGImageDestinationFinalize(dst) else {
+        FileHandle.standardError.write(Data("text: PNG finalize failed\n".utf8))
+        exit(1)
+    }
+    logLine("[text] wrote \(outPath) (\(w)x\(h)) — font=\(fontName) size=\(Int(size)) bold=\(bold) shadow=\(shadow) bg=\(bg != nil)")
     exit(0)
 }

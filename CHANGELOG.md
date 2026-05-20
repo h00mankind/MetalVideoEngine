@@ -22,6 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   255× and clamps every partial-coverage edge pixel to full saturation,
   destroying the anti-aliased gradient. Now divides by 65025 (= 255·255),
   preserving libass's edge coverage. Pixel-matches the ffmpeg burn.
+- **CoreText overlay text (logo branding / channel name) was soft / not
+  crisp** vs ffmpeg drawtext. Two causes: (1) `anchorRect` returned
+  fractional origins for centred anchors, and (2) `overlay_composite`
+  sampled at texel *edges* — so a 1:1 text/logo raster was bilinear-
+  blended across two neighbours, blurring every glyph edge. Fixed by
+  snapping the overlay origin to whole pixels and sampling at texel
+  centres (`+0.5`), so an integer-aligned 1:1 overlay reads its texels
+  verbatim. Also set explicit AA flags on the text CGContext (antialias
+  on, font-smoothing off → clean grayscale coverage like libass).
+
+### Added
+- **`mve text` CLI subcommand** — a CoreText rasterisation probe. Renders
+  one line through the production `Overlay.rasterizeText` path to a PNG so
+  font / size / colour / bold / shadow / pill / corner-radius / AA can be
+  eyeballed without a full video render. `--bgfill checker|RRGGBB` paints
+  a backdrop so anti-aliased edges are visible. See `mve` usage.
 
 ## [0.1.2] — 2026-05-20
 
