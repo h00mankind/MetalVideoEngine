@@ -108,7 +108,11 @@ public enum Overlay {
     /// byteOrder32Little). Reused by `loadImage` + `rasterizeText` so
     /// both surfaces produce textures the engine's composite shader
     /// already knows how to read.
-    public static func textureFromCGImage(_ cg: CGImage, device: MTLDevice) throws -> MTLTexture {
+    public static func textureFromCGImage(
+        _ cg: CGImage,
+        device: MTLDevice,
+        flipY: Bool = false
+    ) throws -> MTLTexture {
         let w = cg.width
         let h = cg.height
         let bytesPerRow = w * 4
@@ -124,10 +128,18 @@ public enum Overlay {
         ) else {
             throw MVEError.pipelineStateFailed("Overlay.textureFromCGImage: CGContext failed")
         }
-        // Y-flip so the texture lands top-down (Metal sample convention)
-        // regardless of the CGImage's underlying orientation.
-        ctx.translateBy(x: 0, y: CGFloat(h))
-        ctx.scaleBy(x: 1, y: -1)
+        // Row-order convention: Metal's sampler treats buffer row 0 as
+        // the top of the texture (uv.y=0 → first row). `CGContext.draw`
+        // of a top-down ImageIO CGImage already lands row 0 = top, so an
+        // image loaded from disk needs NO flip (flipY: false). The text
+        // rasteriser, by contrast, hands us a CGImage whose rows are
+        // bottom-up relative to what it wants on screen, so it asks for
+        // flipY: true. Previously this function always flipped, which
+        // was right for text but rendered disk logos upside-down.
+        if flipY {
+            ctx.translateBy(x: 0, y: CGFloat(h))
+            ctx.scaleBy(x: 1, y: -1)
+        }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
@@ -292,7 +304,11 @@ public enum Overlay {
         guard let cgImage = cg.makeImage() else {
             throw MVEError.pipelineStateFailed("Overlay.rasterizeText: makeImage failed")
         }
-        return try textureFromCGImage(cgImage, device: device)
+        // The text raster's rows are bottom-up relative to the on-screen
+        // orientation we want, so ask textureFromCGImage to flip — this
+        // preserves the pre-existing (correct) text orientation now that
+        // the flip is opt-in rather than unconditional.
+        return try textureFromCGImage(cgImage, device: device, flipY: true)
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

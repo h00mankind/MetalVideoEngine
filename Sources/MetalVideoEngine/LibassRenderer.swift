@@ -269,13 +269,22 @@ private func blendASSImage(
                 if x < 0 || x >= dstWidth { continue }
                 let maskByte = UInt32(srcBase[row * srcStride + col])
                 if maskByte == 0 { continue }
-                // final alpha in 0..65025 = maskByte * colorAlpha
+                // Coverage alpha α = (maskByte/255)·(colorAlpha/255).
+                // a16 = maskByte·colorAlpha ∈ 0..65025, so α = a16/65025.
                 let a16 = maskByte * colorAlpha
                 if a16 == 0 { continue }
-                // Premultiplied src bytes in /65025 scale (8 bits effective).
-                let sR = (srcR * a16) / 255
-                let sG = (srcG * a16) / 255
-                let sB = (srcB * a16) / 255
+                // Premultiplied src channels = srcChannel · α, in 0..255.
+                // This MUST divide by 65025 (= 255·255), not 255: srcR is
+                // 0..255 and a16 is 0..65025, so (srcR·a16)/255 overshoots
+                // by 255× and clamps to full saturation — which blew out
+                // every anti-aliased edge pixel to a hard opaque colour
+                // and is what made the captions look jagged / not crisp.
+                // Dividing by 65025 preserves the partial-coverage edge
+                // gradients libass produces.
+                let sR = (srcR * a16) / 65025
+                let sG = (srcG * a16) / 65025
+                let sB = (srcB * a16) / 65025
+                // Premultiplied src alpha = 255·α = a16/255 (255·255/255).
                 let sA = a16 / 255
                 let invA = 255 - sA   // for the dst contribution
 

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-05-20
+
+### Fixed
+- **Image overlays (logos) rendered upside-down.** `Overlay.textureFromCGImage`
+  unconditionally Y-flipped the bitmap, which was correct for the text
+  rasteriser (whose CGImage rows are bottom-up) but inverted disk-loaded
+  logo images (already top-down from ImageIO). The flip is now opt-in via
+  a `flipY` parameter: `loadImage` passes `false`, `rasterizeText` passes
+  `true`. Logos render upright; text orientation is unchanged. Mirror
+  still only affects the source video, never the overlays.
+- **Caption / overlay-text edges were not anti-aliased** (jagged, "not
+  crisp" vs the ffmpeg/libass reference). The libass alpha-blend in
+  `blendASSImage` premultiplied the source colour with `(srcC · a16) / 255`
+  where `a16` is `maskByte · colorAlpha` (0..65025). That overshoots by
+  255× and clamps every partial-coverage edge pixel to full saturation,
+  destroying the anti-aliased gradient. Now divides by 65025 (= 255·255),
+  preserving libass's edge coverage. Pixel-matches the ffmpeg burn.
+
 ## [0.1.2] — 2026-05-20
 
 ### Fixed

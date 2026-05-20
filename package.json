@@ -1,6 +1,6 @@
 {
   "name": "metal-video-engine",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "GPU-resident video render pipeline for Apple Silicon — Metal + libass + VideoToolbox, with a Node bridge.",
   "type": "module",
   "main": "./bridge/mve.mjs",
