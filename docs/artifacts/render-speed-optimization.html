@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MetalVideoEngine — Render-Speed Optimization Plan</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c2330;
+  --text:#dbe2ea; --muted:#8b97a5; --border:#2a3340;
+  --accent:#e8b545;            /* amber — headings, active */
+  --ok:#4cc38a; --warn:#e8b545; --bad:#e5604c; --info:#6cb6ff;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --u:8px; --radius:6px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 var(--sans)}
+code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere;word-break:break-word}
+pre{overflow-x:auto;max-width:100%;background:var(--panel2);padding:12px;border-radius:var(--radius);border:1px solid var(--border)}
+pre code{background:none;padding:0;overflow-wrap:normal;word-break:normal;white-space:pre}
+a{color:var(--info);text-decoration:none}
+.card,.sidebar,.grid>*{min-width:0}
+
+.layout{display:grid;grid-template-columns:210px 1fr;max-width:1180px;margin:0 auto;gap:calc(var(--u)*4);padding:calc(var(--u)*4)}
+@media(max-width:880px){.layout{grid-template-columns:1fr}.sidebar{display:none}}
+
+.sidebar{position:sticky;top:24px;align-self:start;font-family:var(--mono);font-size:12px}
+.sidebar a{display:block;color:var(--muted);padding:5px 10px;border-left:2px solid var(--border)}
+.sidebar a.active{color:var(--accent);border-left-color:var(--accent)}
+.sidebar .top{color:var(--text);font-weight:700;margin-bottom:8px;padding-left:12px}
+
+header{border-bottom:1px solid var(--border);padding-bottom:calc(var(--u)*3);margin-bottom:calc(var(--u)*4)}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h1{font-size:27px;margin:6px 0 4px;font-weight:700}
+.sub{color:var(--muted);max-width:70ch}
+h2{font-size:13px;font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:8px;margin:0 0 16px}
+section{margin-bottom:calc(var(--u)*6)}
+
+.directive{background:linear-gradient(90deg,rgba(232,181,69,.10),transparent);border:1px solid rgba(232,181,69,.35);border-left:3px solid var(--accent);border-radius:var(--radius);padding:12px 16px;margin-top:16px}
+.directive b{color:var(--accent)}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)}
+td{padding:7px 10px;border-bottom:1px solid var(--panel2);vertical-align:top}
+td.num{font-family:var(--mono);white-space:nowrap}
+
+.bars{margin-top:14px;position:relative}
+.barrow{display:grid;grid-template-columns:230px 1fr 64px;gap:10px;align-items:center;margin:6px 0;font-size:12.5px}
+.barrow .lbl{color:var(--muted);font-family:var(--mono);font-size:11.5px;text-align:right}
+.track{position:relative;height:14px;background:var(--panel2);border-radius:3px}
+.fill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--info)}
+.fill.floor{background:var(--bad)}
+.fill.ours{background:var(--ok)}
+.floorline{position:absolute;top:-4px;bottom:-4px;width:0;border-left:2px dashed var(--bad);opacity:.65}
+.barrow .val{font-family:var(--mono);color:var(--text)}
+.legend{font-size:11.5px;color:var(--muted);font-family:var(--mono);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin:0 4px 0 12px}
+
+.grid{display:grid;gap:14px}
+.grid.cols3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:880px){.grid.cols3{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.card h3{margin:0 0 6px;font-size:15px}
+.card p{margin:6px 0;font-size:13.5px;color:var(--muted)}
+.proof{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:10px;margin:2px 4px 0 0;border:1px solid}
+.proof.ok{color:var(--ok);border-color:rgba(76,195,138,.4);background:rgba(76,195,138,.08)}
+.proof.bad{color:var(--bad);border-color:rgba(229,96,76,.4);background:rgba(229,96,76,.08)}
+
+.depsvg{width:100%;max-width:760px;display:block;margin:0 auto 18px}
+.depsvg text{font-family:var(--mono);font-size:11px;fill:var(--text)}
+.depsvg .lane{font-size:10px;fill:var(--muted)}
+.depsvg rect{fill:var(--panel);stroke:var(--border)}
+.depsvg rect.done{stroke:var(--ok)}
+.depsvg line,.depsvg path{stroke:#3d4a5c;stroke-width:1.2;fill:none;marker-end:url(#arr)}
+
+.slice{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:14px}
+.slice .head{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.slice .id{font-family:var(--mono);font-weight:700;color:var(--accent)}
+.slice h3{margin:0;font-size:15.5px;flex:1}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.tag.neutral{color:var(--ok);border:1px solid rgba(76,195,138,.4)}
+.tag.changes{color:var(--warn);border:1px solid rgba(232,181,69,.4)}
+.tag.dep{color:var(--muted);border:1px solid var(--border)}
+.slice p{font-size:13.5px;color:#aeb9c5;margin:8px 0}
+.gates{margin:8px 0 0;padding:0;list-style:none}
+.gates li{font-size:13px;color:var(--muted);padding:3px 0 3px 24px;position:relative}
+.gates li::before{content:"";position:absolute;left:2px;top:6px;width:11px;height:11px;border:1.5px solid var(--muted);border-radius:3px}
+
+.qa{border-left:3px solid var(--info);background:var(--panel);border-radius:0 var(--radius) var(--radius) 0;padding:12px 16px;margin-bottom:10px}
+.qa b{color:var(--info)}
+.qa p{margin:4px 0 0;font-size:13.5px;color:var(--muted)}
+.oos{color:var(--muted);font-size:13.5px}
+.oos li{margin:4px 0}
+footer{border-top:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:11.5px;padding-top:16px}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar" id="toc">
+    <div class="top">RENDER-SPEED PLAN</div>
+    <a href="#evidence">Measured evidence</a>
+    <a href="#landed">Landed this session</a>
+    <a href="#board">Slice board</a>
+    <a href="#questions">Open questions</a>
+    <a href="#scope">Out of scope</a>
+  </nav>
+
+  <main>
+  <header>
+    <div class="kicker">MetalVideoEngine · handoff for executing agents · 2026-06-12</div>
+    <h1>Render-Speed Optimization — Social Media Export</h1>
+    <p class="sub">Source of truth: <code>docs/plans/render-speed-optimization.md</code>. Three fixes are already in the working tree (pending commit, parity-proven); eight slices remain. Bench fixture recipe lives in the plan doc.</p>
+    <div class="directive"><b>Prime directive:</b> every speed change ships with proof that output quality is unchanged — bit-identical where the change claims neutrality (PSNR <code>inf</code> + frame MD5), explicitly flagged and approved where it isn't.</div>
+  </header>
+
+  <section id="evidence">
+    <h2>1 · Measured evidence — M1 Pro, 60 s 1080×1920@30 fixture</h2>
+    <p class="sub">The wall every scenario hits is the <b style="color:var(--bad)">hardware decode floor</b>: one VideoToolbox decode session = 7.9 s for this clip. The engine already sits at ffmpeg parity ~1.6 s above it. Chunked parallelism is a no-op on M1 Pro (one media engine) — it exists for Max (2 encode engines) and Ultra (4).</p>
+    <div class="bars" id="bars"></div>
+    <div class="legend">
+      <i style="background:var(--bad)"></i>decode floor
+      <i style="background:var(--info)"></i>reference / parallel
+      <i style="background:var(--ok)"></i>this engine
+    </div>
+    <table style="margin-top:18px">
+      <tr><th>Fact</th><th>Number</th><th>Consequence</th></tr>
+      <tr><td>Captions + logo + text overlay cost</td><td class="num">~3 %</td><td>overlay paths are not the bottleneck on simple content; they matter for CPU/thermals and karaoke-heavy jobs</td></tr>
+      <tr><td>GPU-heavy bypass (edge blur 30 + noise + grain + zoom)</td><td class="num">9.48 s</td><td>GPU has headroom — shader work is not the constraint</td></tr>
+      <tr><td>Encoder determinism (same input, two runs)</td><td class="num">PSNR inf</td><td>bit-equality is a valid quality gate on this hardware</td></tr>
+      <tr><td>Chunked vs single encode of identical pixels</td><td class="num">~33 dB</td><td>rate control restarts per chunk → chunked output is <em>not</em> bit-identical; opt-in until Q1 resolved</td></tr>
+    </table>
+  </section>
+
+  <section id="landed">
+    <h2>2 · Landed this session — working tree, pending commit</h2>
+    <div class="grid cols3">
+      <div class="card">
+        <h3>Semaphore-dispose SIGTRAP fix</h3>
+        <p><code>Engine.swift</code> · <code>ParallelEngine.swift</code> — inflight semaphores created at 0 and primed with signals; the final drain no longer leaves the value below creation value, which libdispatch traps on dispose.</p>
+        <p><b>Before:</b> every render exited 133 after <code>[done]</code>; parallel engine died mid-run with no output. The Node bridge papered over it with a wrong root-cause comment.</p>
+        <span class="proof bad">was: exit 133</span><span class="proof ok">now: exit 0</span><span class="proof ok">parallel completes</span>
+      </div>
+      <div class="card">
+        <h3>Rect-scoped overlay dispatch</h3>
+        <p><code>FilterGraph.composite</code> + <code>overlay_composite</code> kernel — composite passes dispatch only the overlay's rect instead of the full 2-megapixel canvas; kernel offsets <code>gid</code> by the integer-snapped origin.</p>
+        <p>~99 % thread reduction per logo / text overlay per frame; identical pixel set processed.</p>
+        <span class="proof ok">PSNR inf vs baseline</span><span class="proof ok">frame MD5 equal</span>
+      </div>
+      <div class="card">
+        <h3>libass detect_change caching</h3>
+        <p><code>LibassRenderer.renderTexture</code> — when libass reports the subtitle frame unchanged, the CPU blend + ~8 MB upload are skipped and the cached texture returned. Uploads rotate an 8-slot texture ring (fixes a latent in-flight tearing race); scratch buffer reused.</p>
+        <p>Bench fixture: 24 recomposes instead of 1800.</p>
+        <span class="proof ok">PSNR inf vs baseline</span><span class="proof ok">ring ≥ inflight+1</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="board">
+    <h2>3 · Slice board — dependency order</h2>
+    <svg class="depsvg" viewBox="0 0 760 190" role="img" aria-label="Slice dependency graph">
+      <defs><marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#3d4a5c" stroke="none"/></marker></defs>
+      <rect x="10" y="75" width="120" height="34" rx="5" class="done"/><text x="70" y="96" text-anchor="middle">S1 ship fixes</text>
+      <rect x="200" y="75" width="130" height="34" rx="5"/><text x="265" y="96" text-anchor="middle">S2 bench harness</text>
+      <rect x="410" y="10" width="170" height="30" rx="5"/><text x="495" y="29" text-anchor="middle">S3 parallel full JobSpec</text>
+      <rect x="410" y="52" width="170" height="30" rx="5"/><text x="495" y="71" text-anchor="middle">S4 logo pre-scale</text>
+      <rect x="410" y="94" width="170" height="30" rx="5"/><text x="495" y="113" text-anchor="middle">S5 dirty-rect subtitles</text>
+      <rect x="410" y="136" width="170" height="30" rx="5"/><text x="495" y="155" text-anchor="middle">S6 edge blur σ + separable</text>
+      <rect x="630" y="52" width="120" height="30" rx="5"/><text x="690" y="71" text-anchor="middle">S7 HEVC preset</text>
+      <rect x="630" y="94" width="120" height="30" rx="5"/><text x="690" y="113" text-anchor="middle">S8 honest exits</text>
+      <line x1="130" y1="92" x2="195" y2="92"/>
+      <path d="M330,84 C 365,70 375,32 405,26"/>
+      <path d="M330,90 C 360,82 375,70 405,67"/>
+      <path d="M330,94 C 360,102 375,106 405,109"/>
+      <path d="M330,100 C 365,116 375,144 405,150"/>
+      <path d="M130,84 C 300,-14 560,28 627,60"/>
+      <path d="M130,100 C 320,180 560,132 627,112"/>
+    </svg>
+
+    <div class="slice">
+      <div class="head"><span class="id">S1</span><h3>Ship the landed fixes</h3><span class="tag neutral">quality-neutral</span><span class="tag dep">blocked by: —</span></div>
+      <p>Commit the three session fixes, add CHANGELOG entries (incl. the <code>bgRadius</code> entry v0.1.3 missed), bump to v0.1.4, publish npm package + binary.</p>
+      <ul class="gates">
+        <li><code>mve job</code> exits 0 on success (was 133)</li>
+        <li><code>mve render --chunks 3</code> completes with a valid output file (was SIGTRAP, no file)</li>
+        <li>Full-job output bit-equivalent to v0.1.3 baseline (PSNR inf)</li>
+        <li>CHANGELOG documents all three changes + bgRadius</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S2</span><h3>Benchmark + parity harness in-repo</h3><span class="tag neutral">tooling</span><span class="tag dep">blocked by: S1</span></div>
+      <p>Replace stale <code>bench.sh</code> (still calls a defunct <code>recap-metal</code> binary). One script: generate synthetic fixture (testsrc2 clip, ASS captions, logo, job specs), run baseline vs candidate, print speed table + PASS/FAIL parity verdict (frame MD5s, full-output PSNR, determinism pre-check).</p>
+      <ul class="gates">
+        <li>One command → speed table + parity verdict</li>
+        <li>Baseline-vs-baseline determinism check runs before trusting PSNR</li>
+        <li>Documented in README</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S3</span><h3>ParallelRenderEngine: full JobSpec parity</h3><span class="tag neutral">quality-neutral pre-encode</span><span class="tag dep">blocked by: S1, S2</span></div>
+      <p>Extend <code>renderChunk</code> to everything the single engine does: bypass, LUT, libass (one renderer per chunk, seeded to chunk start), static overlays, <code>[meta]</code>/progress lines, audio (mix once, mux after concat). Auto chunk count from the chip's encode-engine count; single-pipeline fallthrough when 1. The payoff machine is Max/Ultra — M1 Pro measured flat.</p>
+      <ul class="gates">
+        <li>Full social-export job renders correctly chunked</li>
+        <li>Frame probes at chunk boundaries match single-pipeline pixels (pre-encode)</li>
+        <li>Multi-engine machine: measured wall-time reduction; M1 Pro: auto selects single-pipeline</li>
+        <li>Bridge progress ratio stays monotonic 0→1 across chunks</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S4</span><h3>Pre-scale logo textures at job start</h3><span class="tag changes">changes pixels (for the better)</span><span class="tag dep">blocked by: S2</span></div>
+      <p><code>Overlay.loadImage</code> gains a target size; logos resampled once on CPU (high-quality, EXIF orientation applied) to the integer composite rect → every static overlay becomes a true 1:1 composite. Kills the per-frame single-tap bilinear downscale that aliases large logos.</p>
+      <ul class="gates">
+        <li>Logo rect sizes integer; composite 1:1</li>
+        <li>No shimmer/aliasing vs v0.1.3 at 4× zoom (eyeball probe)</li>
+        <li>EXIF-rotated JPEG logos render upright</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S5</span><h3>Dirty-rect subtitle compose + upload</h3><span class="tag neutral">quality-neutral</span><span class="tag dep">blocked by: S2 · pairs after S3</span></div>
+      <p>Track the union bbox of ASS_Image rects per changed frame; zero/blend/<code>replace()</code> only that region (plus the previous frame's box so stale glyphs clear); pass the bbox to <code>graph.composite</code> so the GPU pass shrinks from full canvas to caption-sized. This is the karaoke-content win, where detect_change fires every frame.</p>
+      <ul class="gates">
+        <li>Pixel parity vs S1 on bench fixture AND a karaoke ASS</li>
+        <li>Measured subtitle-path CPU reduction on karaoke job (report numbers)</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S6</span><h3>Edge blur: fix strength, then separable</h3><span class="tag changes">step 1 changes pixels intentionally</span><span class="tag dep">blocked by: S2</span></div>
+      <p>Step 1 (audit finding): tap stride must be <code>sigma / EFF_SIGMA</code> (σ/3), not <code>sigma / KERNEL_R</code> (σ/6) — the kernel currently renders at <b>half</b> the requested Gaussian sigma vs the CSS/ffmpeg preview. Step 2: replace the 169-tap 2D grid with a two-pass separable Gaussian (~6× fewer band-pixel taps), matching the fixed 2D reference within float tolerance.</p>
+      <ul class="gates">
+        <li>Rendered strength matches CSS <code>backdrop-filter: blur(σ)</code> preview side-by-side</li>
+        <li>Separable ≈ 2D reference (PSNR &gt; 55 dB on bands; no banding at σ ∈ {5, 30, 100})</li>
+        <li>Band-pass GPU time reported before/after</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S7</span><h3>HEVC delivery preset</h3><span class="tag neutral">size win, speed-neutral</span><span class="tag dep">blocked by: S1</span></div>
+      <p>Surface the existing HEVC codec path as a first-class job option with tuned bitrate defaults (~60–70 % of H.264 at equal quality); verify TikTok/Reels/Shorts ingest; document the trade-off.</p>
+      <ul class="gates">
+        <li><code>"codec": "hevc"</code> equal visual quality (SSIM within noise) at reduced size</li>
+        <li>Bridge <code>.d.ts</code> documents the option</li>
+      </ul>
+    </div>
+
+    <div class="slice">
+      <div class="head"><span class="id">S8</span><h3>Bridge: honest exit codes</h3><span class="tag neutral">correctness</span><span class="tag dep">blocked by: S1 published</span></div>
+      <p>Once v0.1.4 is the published floor, drop the bridge's "any exit is success if a <code>[done]</code> blob was seen" workaround (its comment misattributes the SIGTRAP to AVFoundation teardown — real cause was the semaphore trap, now fixed). Reject on nonzero exit; keep <code>[done]</code> parse for stats only.</p>
+      <ul class="gates">
+        <li>Nonzero engine exit rejects the bridge promise with the code</li>
+        <li>Forced failure (bad input path) surfaces a real error to the host</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="questions">
+    <h2>4 · Open questions — resolve before the dependent slice</h2>
+    <div class="qa"><b>Q1 · Chunked-encode acceptability</b><p>Chunk boundaries restart rate control → chunked ≠ single output (~33 dB between them; both valid encodes of identical pixels). OK for delivery renders, or draft-only? Product-owner decision gates S3 making chunking automatic.</p></div>
+    <div class="qa"><b>Q2 · Multi-media-engine test hardware</b><p>S3's speedup claim needs a Max/Ultra machine or CI runner; none was available this session.</p></div>
+    <div class="qa"><b>Q3 · Media-engine count detection</b><p>No public API exposes encode-engine count; likely a chip-name lookup table. Acceptable?</p></div>
+  </section>
+
+  <section id="scope">
+    <h2>5 · Out of scope</h2>
+    <ul class="oos">
+      <li>Software encoders (x264/x265) — different quality/speed regime, breaks the GPU-resident design.</li>
+      <li>Lowering encode quality for speed — the <code>draft</code> profile already exists for that.</li>
+      <li>Editor preview/scrub performance — export path only.</li>
+      <li>Audit findings not folded into S4/S6.</li>
+    </ul>
+  </section>
+
+  <footer>plan: docs/plans/render-speed-optimization.md · fixture: /tmp/mve-bench (recipe in plan §S2) · session: 2026-06-12 · chip: Apple M1 Pro</footer>
+  </main>
+</div>
+
+<script>
+// Wall-time bars. floor = decode-only; max scale padded for labels.
+const data = [
+  {label:"decode-only floor (ffmpeg VT)", val:7.90, cls:"floor"},
+  {label:"ffmpeg full pipeline",          val:9.35, cls:""},
+  {label:"mve job · plain",               val:9.50, cls:"ours"},
+  {label:"mve job · full social export",  val:9.75, cls:"ours"},
+  {label:"mve job · GPU-heavy bypass",    val:9.48, cls:"ours"},
+  {label:"mve render --chunks 3 (fixed)", val:9.78, cls:""},
+];
+const MAX = 10.5, FLOOR = 7.90;
+const bars = document.getElementById("bars");
+for (const d of data) {
+  const row = document.createElement("div");
+  row.className = "barrow";
+  row.innerHTML = `<div class="lbl">${d.label}</div>
+    <div class="track"><div class="fill ${d.cls}" style="width:${(d.val/MAX*100).toFixed(1)}%"></div>
+    <div class="floorline" style="left:${(FLOOR/MAX*100).toFixed(1)}%"></div></div>
+    <div class="val">${d.val.toFixed(2)} s</div>`;
+  bars.appendChild(row);
+}
+
+// Scrollspy: observe sections, highlight largest visible area.
+const links = [...document.querySelectorAll("#toc a")];
+const sections = links.map(a => document.querySelector(a.getAttribute("href")));
+const visible = new Map();
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) visible.set(e.target.id, e.intersectionRatio * e.target.offsetHeight);
+  let best = null, bestA = -1;
+  for (const [id, area] of visible) if (area > bestA) { bestA = area; best = id; }
+  links.forEach(a => a.classList.toggle("active", a.getAttribute("href") === "#" + best));
+}, {threshold:[0,.25,.5,.75,1]});
+sections.forEach(s => s && io.observe(s));
+</script>
+</body>
+</html>
