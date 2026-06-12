@@ -183,8 +183,12 @@ public final class RenderEngine {
         // dispose. The old form crashed every render with SIGTRAP /
         // exit 133 right after `[done]` — and killed sibling chunks
         // mid-run in ParallelRenderEngine.
+        // Clamped: maxInflight comes from user job JSON unvalidated; 0
+        // would deadlock the first wait() and a negative value traps
+        // the Range below.
+        let inflightDepth = max(1, req.maxInflight)
         let inflight = DispatchSemaphore(value: 0)
-        for _ in 0..<req.maxInflight { inflight.signal() }
+        for _ in 0..<inflightDepth { inflight.signal() }
         let encoderLock = NSLock()
         let errorLock = NSLock()
         var firstError: Error?
@@ -293,7 +297,7 @@ public final class RenderEngine {
             }
         }
 
-        for _ in 0..<req.maxInflight { inflight.wait() }
+        for _ in 0..<inflightDepth { inflight.wait() }
         if let e = firstError { throw e }
 
         try writer.finish()

@@ -12,6 +12,15 @@
 
 set -euo pipefail
 
+# The old bench.sh took `bench.sh <input.mp4>`; this harness is
+# configured entirely via MVE_* env vars. Reject positional args so an
+# old-style invocation fails loudly instead of silently benchmarking a
+# synthetic fixture.
+if [[ $# -gt 0 ]]; then
+  echo "FAIL: bench.sh takes no arguments (configure via MVE_BENCH_* env vars; see README)" >&2
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FFMPEG="${FFMPEG_BIN:-ffmpeg}"
 FFPROBE="${FFPROBE_BIN:-ffprobe}"
@@ -102,7 +111,13 @@ psnr_average() {
   if [[ $status -ne 0 ]]; then
     die "ffmpeg PSNR failed for $label; see $log"
   fi
-  sed -n 's/.*average:\([^ ]*\).*/\1/p' "$log" | tail -1
+  local avg
+  avg="$(sed -n 's/.*average:\([^ ]*\).*/\1/p' "$log" | tail -1)"
+  # An empty parse must not masquerade as a PSNR value — the caller
+  # compares against "inf" and would misreport it as encoder
+  # nondeterminism.
+  [[ -n "$avg" ]] || die "could not parse PSNR average for $label; see $log"
+  echo "$avg"
 }
 
 write_ass() {
@@ -236,6 +251,11 @@ require_positive_int "MVE_BENCH_FPS" "$FPS"
 require_positive_int "MVE_BENCH_SOURCE_BITRATE" "$SOURCE_BITRATE"
 require_positive_int "MVE_BENCH_OUTPUT_BITRATE" "$OUTPUT_BITRATE"
 require_positive_number "MVE_BENCH_DURATION" "$DURATION"
+# Below ~1s the default frame probes (25% / 75% of duration, floored at
+# 0.1s/0.2s) can land past the last frame's PTS and renderFrame dies
+# with "ran out of frames".
+python3 -c "import sys; sys.exit(0 if float('$DURATION') >= 1 else 1)" \
+  || die "MVE_BENCH_DURATION must be >= 1 second"
 (( WIDTH % 2 == 0 )) || die "MVE_BENCH_WIDTH must be even for H.264"
 (( HEIGHT % 2 == 0 )) || die "MVE_BENCH_HEIGHT must be even for H.264"
 
@@ -249,7 +269,8 @@ mkdir -p "$WORKDIR"
 
 if [[ ! -x "$CANDIDATE_BIN" && "$CANDIDATE_BIN" == "$ROOT/.build/release/mve" ]]; then
   echo "candidate binary missing; building release mve"
-  CLANG_MODULE_CACHE_PATH="$ROOT/.build/clang-module-cache" swift build -c release
+  # --package-path: the script may be invoked from any cwd.
+  CLANG_MODULE_CACHE_PATH="$ROOT/.build/clang-module-cache" swift build -c release --package-path "$ROOT"
 fi
 
 [[ -x "$CANDIDATE_BIN" ]] || die "candidate binary is not executable: $CANDIDATE_BIN"

@@ -266,7 +266,10 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
             Fonts.registerDirectory(dir)
         }
         let doc = try String(contentsOfFile: s.assPath, encoding: .utf8)
-        let r = try LibassRenderer(canvasWidth: w, canvasHeight: h)
+        // Ring depth must cover the engine's in-flight frame count —
+        // see LibassRenderer.init.
+        let r = try LibassRenderer(canvasWidth: w, canvasHeight: h,
+                                   inflightDepth: max(1, spec.maxInflight ?? 5))
         try r.loadTrack(content: doc)
         libass = r
     }
@@ -362,7 +365,7 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
         lut: lut,
         libass: libass,
         staticOverlays: overlays,
-        maxInflight: spec.maxInflight ?? 5,
+        maxInflight: max(1, spec.maxInflight ?? 5),
         audio: audio
     )
 }
