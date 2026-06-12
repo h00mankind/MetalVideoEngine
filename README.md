@@ -3,7 +3,7 @@
 GPU-resident video render pipeline for Apple Silicon. Decode → grade → LUT
 → subtitle burn → encode, with frames never leaving the GPU.
 
-> **Status:** experimental (`v0.1.0`). API may change between minor versions.
+> **Status:** experimental (`v0.1.4`). API may change between minor versions.
 
 ## Premise
 
@@ -81,7 +81,7 @@ band) with `MVE_SKIP_DOWNLOAD=1`. Override the resolved binary path with
 ### As a SwiftPM dependency
 
 ```swift
-.package(url: "https://github.com/h00mankind/MetalVideoEngine.git", from: "0.1.0")
+.package(url: "https://github.com/h00mankind/MetalVideoEngine.git", from: "0.1.4")
 ```
 
 ```swift
@@ -161,8 +161,28 @@ The CLI logs progress to stderr in a stable format:
 
 ### Node bridge
 
-`bridge/mve.ts` spawns the CLI and parses the progress/done lines into a
+`bridge/mve.mjs` spawns the CLI and parses the progress/done lines into a
 typed event stream. See the file's header comment for usage.
+
+## Benchmark / parity harness
+
+`bench.sh` generates a synthetic vertical-video fixture, ASS captions, and
+a logo PNG, then renders baseline-vs-baseline and baseline-vs-candidate
+jobs. It reports wall times, checks that the encoder is deterministic
+before trusting PSNR, compares full-output PSNR, and compares PNG frame
+probe MD5s. The full-output PSNR covers the generated logo and text
+overlays; the frame probes cover the pre-encode render path.
+
+```sh
+MVE_BASELINE_BIN=/path/to/v0.1.3/mve ./bench.sh
+```
+
+If `MVE_BASELINE_BIN` is not set, the script uses the current release
+binary for both baseline and candidate, building `.build/release/mve` if
+needed. That mode is useful as a local smoke test. The default fixture is
+60 s at 1080x1920. For a quick harness check, override
+`MVE_BENCH_DURATION`, `MVE_BENCH_WIDTH`, `MVE_BENCH_HEIGHT`, and
+`MVE_BENCH_PROBES`.
 
 ## Constraints / known issues
 
@@ -173,11 +193,10 @@ typed event stream. See the file's header comment for usage.
 - **arm64 only**: Intel Mac builds would need a separate compute path
   (OpenCL or CPU fallback). Not planned.
 - **Single video input**: no multi-track / EDL pipeline.
-- **`[done]` line is load-bearing**: the CLI may exit with a non-zero
-  signal (AVFoundation audio queue teardown occasionally raises SIGTRAP
-  at process exit) even though the mp4 is fully flushed. Consumers
-  should treat presence of the `[done]` line as success regardless of
-  exit code — the bridge in `bridge/mve.ts` already does this.
+- **Bridge compatibility**: v0.1.4 fixes the semaphore-dispose trap that
+  made older binaries exit non-zero after `[done]`. The Node bridge still
+  treats a captured `[done]` line as success for one release so hosts can
+  run against older binaries during rollout.
 
 ## Repo layout
 
@@ -195,8 +214,8 @@ typed event stream. See the file's header comment for usage.
   - `Encoder.swift`, `AudioMix.swift` — VT encode + audio mux
 - `Sources/mve/main.swift`            — CLI entry point
 - `Sources/CLibass/`                  — libass module shim
-- `bridge/mve.ts`                     — Node/TS wrapper around the CLI
-- `bench.sh`                          — quick wall-time comparison
+- `bridge/mve.mjs`, `bridge/mve.d.ts` — Node wrapper around the CLI
+- `bench.sh`                          — benchmark + parity harness
 
 ## License
 

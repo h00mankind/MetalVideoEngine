@@ -332,9 +332,20 @@ public enum Shaders {
         constant OverlayParams& params [[buffer(0)]],
         uint2 gid [[thread_position_in_grid]]
     ) {
-        if (gid.x >= uint(params.dstSize.x) || gid.y >= uint(params.dstSize.y)) return;
-        float2 dstPx = float2(gid);
-        // Outside rect → no work.
+        // The grid spans only the overlay's rect (see
+        // FilterGraph.composite), not the full canvas — a small logo or
+        // text pill no longer launches 2M mostly-idle threads per
+        // frame. gid is rect-relative; offset it back into canvas
+        // space. rectOrigin is integer-valued at every call site
+        // (anchorRect snaps, libass composites at 0,0); the max() guard
+        // keeps a hypothetical negative origin from wrapping the uint.
+        uint2 pix = gid + uint2(max(params.rectOrigin, float2(0.0)));
+        if (pix.x >= uint(params.dstSize.x) || pix.y >= uint(params.dstSize.y)) return;
+        float2 dstPx = float2(pix);
+        // Guard the rect's fractional tail: the grid is the ceil() of
+        // rectSize, so the last row/column can overshoot a fractional
+        // rect by under a pixel. Same pixel set as the old full-canvas
+        // bounds test.
         if (dstPx.x < params.rectOrigin.x ||
             dstPx.y < params.rectOrigin.y ||
             dstPx.x >= params.rectOrigin.x + params.rectSize.x ||
@@ -366,9 +377,9 @@ public enum Shaders {
         // primaries (set in dequeueBuffer()) so VideoToolbox interprets
         // the bytes as RGB on encode.
         float a = src.a * params.opacity;
-        float4 bg = dst.read(gid);
+        float4 bg = dst.read(pix);
         float4 outc = float4(src.rgb * params.opacity + (1.0 - a) * bg.rgb, 1.0);
-        dst.write(outc, gid);
+        dst.write(outc, pix);
     }
     """#
 }

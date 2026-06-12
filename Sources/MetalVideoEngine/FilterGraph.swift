@@ -189,7 +189,19 @@ public final class FilterGraph {
         let w = overlayPipeline.threadExecutionWidth
         let h = overlayPipeline.maxTotalThreadsPerThreadgroup / w
         let tg = MTLSize(width: w, height: h, depth: 1)
-        let grid = MTLSize(width: dst.width, height: dst.height, depth: 1)
+        // Dispatch only the overlay's rect — the kernel offsets gid by
+        // rectOrigin. The span is the exact set of integer pixels the
+        // rect touches (ceil of the far edge minus floor of the
+        // origin), clamped to the canvas so an edge-hugging rect can't
+        // index past the destination. For full-canvas composites
+        // (libass) this is identical to the old full-grid dispatch; for
+        // a logo or text pill it cuts the thread count by ~99%.
+        let ox = max(0, Int(rectOrigin.x.rounded(.down)))
+        let oy = max(0, Int(rectOrigin.y.rounded(.down)))
+        let gx = min(dst.width  - ox, Int((rectOrigin.x + rectSize.x).rounded(.up)) - ox)
+        let gy = min(dst.height - oy, Int((rectOrigin.y + rectSize.y).rounded(.up)) - oy)
+        guard gx > 0, gy > 0 else { cmd.endEncoding(); return }
+        let grid = MTLSize(width: gx, height: gy, depth: 1)
         cmd.dispatchThreads(grid, threadsPerThreadgroup: tg)
         cmd.endEncoding()
     }

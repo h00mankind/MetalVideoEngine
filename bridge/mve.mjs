@@ -166,14 +166,11 @@ export async function runMetalRender(spec, events = {}) {
     child.on('close', (code, signal) => {
       events.signal?.removeEventListener('abort', abort);
       void rm(tmpDir, { recursive: true, force: true });
-      // The engine reaches the `[done]` print right after writer.finish()
-      // returns — by which point the mp4 is fully flushed to disk. It
-      // then calls libc `exit(0)`, which can fire registered atexit
-      // handlers; on macOS those occasionally signal SIGTRAP from
-      // AVFoundation's audio queue tear-down. Treat the run as
-      // successful whenever we already captured a `[done]` blob,
-      // regardless of how the process actually exited — the file is
-      // valid, the engine did its job.
+      // v0.1.3 and older can signal SIGTRAP after `[done]` because the
+      // engine disposed a drained in-flight semaphore. v0.1.4 fixes the
+      // engine, but the bridge keeps this compatibility path for one
+      // release so hosts can roll forward without breaking older local
+      // binaries whose output file was already fully flushed.
       if (finalStats) {
         resolve(finalStats);
         return;

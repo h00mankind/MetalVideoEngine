@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — 2026-06-12
+
+### Added
+- `bench.sh` is now a synthetic benchmark and parity harness. It generates
+  source video, ASS captions, and a logo fixture, runs baseline-vs-baseline
+  before baseline-vs-candidate, and gates on full-output PSNR plus frame
+  PNG MD5 probes.
+
+### Fixed
+- Successful renders no longer end in a libdispatch semaphore `SIGTRAP`
+  after `[done]`. The in-flight frame semaphore is now created at zero and
+  primed with signals, so draining it before teardown leaves it in a legal
+  dispose state. This also fixes the same trap killing sibling chunks in
+  `ParallelRenderEngine`.
+- Text overlays support the `bgRadius` JSON field for pill-background
+  corner radius. The field shipped in v0.1.3 but was missing from that
+  release note.
+
+### Changed
+- Overlay composites dispatch only over the overlay rectangle instead of
+  the full render canvas. Small logo and text overlays now avoid launching
+  mostly idle threads for every frame.
+- libass subtitle textures are cached when `detect_change` reports an
+  unchanged subtitle frame. Changed frames reuse a scratch compose buffer
+  and upload through an eight-slot texture ring so in-flight frames do not
+  sample overwritten subtitle pixels.
+
 ## [0.1.3] — 2026-05-20
 
 ### Fixed

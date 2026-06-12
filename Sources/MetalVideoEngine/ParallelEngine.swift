@@ -185,7 +185,11 @@ public final class ParallelRenderEngine {
         )
         let graph = try FilterGraph(ctx: ctx)
 
-        let inflight = DispatchSemaphore(value: maxInflight)
+        // value 0 + priming signals — see the matching comment in
+        // RenderEngine.render: disposing a semaphore below its creation
+        // value traps, and the drain loop below parks it at 0.
+        let inflight = DispatchSemaphore(value: 0)
+        for _ in 0..<maxInflight { inflight.signal() }
         let encoderLock = NSLock()
         let errorLock = NSLock()
         var firstError: Error?

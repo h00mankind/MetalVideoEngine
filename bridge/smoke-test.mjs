@@ -69,10 +69,9 @@ await new Promise((resolve, reject) => {
   child.on('error', reject);
   child.on('close', (code, signal) => {
     void rm(tmp, { recursive: true, force: true });
-    // Treat as success when we already captured [done] — the engine's
-    // libc exit(0) sometimes raises SIGTRAP from AVF atexit handlers
-    // even after a fully-flushed output. See research/bridge/mve.ts
-    // for the full explanation.
+    // Treat as success when we already captured [done] so this smoke
+    // test still works against v0.1.3-era binaries that can trap after
+    // flushing the output. See bridge/mve.mjs for the compatibility path.
     if (stats) resolve();
     else if (code !== 0) reject(new Error(`exit code=${code} signal=${signal ?? 'none'}`));
     else resolve();

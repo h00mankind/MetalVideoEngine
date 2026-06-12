@@ -174,7 +174,17 @@ public final class RenderEngine {
         log("[engine] output: \(req.width)x\(req.height) @ \(req.bitrate / 1000) kbps  codec=\(codecName(req.codec))  inflight=\(req.maxInflight)")
         if req.audio != nil { log("[engine] audio: enabled") }
 
-        let inflight = DispatchSemaphore(value: req.maxInflight)
+        // Created at value 0 and primed with signal()s instead of
+        // `value: maxInflight`: libdispatch TRAPS in
+        // _dispatch_semaphore_dispose when a semaphore deallocates at a
+        // value below its creation value, and the final drain loop
+        // (`wait × maxInflight`) intentionally parks the value at 0.
+        // With a creation value of 0 the drained state is legal to
+        // dispose. The old form crashed every render with SIGTRAP /
+        // exit 133 right after `[done]` — and killed sibling chunks
+        // mid-run in ParallelRenderEngine.
+        let inflight = DispatchSemaphore(value: 0)
+        for _ in 0..<req.maxInflight { inflight.signal() }
         let encoderLock = NSLock()
         let errorLock = NSLock()
         var firstError: Error?
