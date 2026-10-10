@@ -248,8 +248,9 @@ public final class VideoEncoder: AnyVideoSink {
         }
     }
 
-    public func finish() throws {
+    public func finish(endTime: CMTime?) throws {
         videoInput.markAsFinished()
+        if let endTime { writer.endSession(atSourceTime: endTime) }
         writer.finishWriting { [weak self] in
             self?.semaphore.signal()
         }

@@ -337,6 +337,9 @@ public final class RenderEngine {
             RenderRange(startSeconds: start, endSeconds: min(end, seconds))
         }
 
+        /// True for the frames the range writes: start included, end not.
+        public func contains(_ t: Double) -> Bool { t >= start && t < end }
+
         /// PTS in the output file of the frame at output-timeline `t`.
         public func fileSeconds(at t: Double) -> Double { max(0, t - start) }
     }
@@ -619,8 +622,8 @@ public final class RenderEngine {
                 // The decoder opens at the keyframe before the range.
                 if let r = range {
                     let t = CMTimeGetSeconds(frame.presentationTime)
-                    if t < r.start - Self.ptsEpsilon { continue }
-                    if t >= r.end - Self.ptsEpsilon { break }
+                    if t >= r.end { break }
+                    if !r.contains(t) { continue }
                 }
 
                 guard let yTex = ctx.texture(from: frame.pixelBuffer, plane: 0, pixelFormat: .r8Unorm),
@@ -838,7 +841,11 @@ public final class RenderEngine {
         for _ in 0..<inflightDepth { inflight.wait() }
         if let e = firstError { throw e }
 
-        try writer.finish()
+        // A range ends the file at its end time, not one frame interval
+        // after the last frame, so video and trimmed audio agree.
+        try writer.finish(endTime: range.map {
+            CMTimeMakeWithSeconds($0.duration, preferredTimescale: 90000)
+        })
         let wall = Date().timeIntervalSince(started)
         let stats = Stats(framesProcessed: frameCount, wallClockSecs: wall, sourceDurationSecs: writtenSecs)
         log(String(format: "[done] frames=%d  src=%.2fs  wall=%.2fs  speed=%.2fx",
@@ -1129,7 +1136,13 @@ public final class RenderEngine {
 public protocol AnyVideoSink {
     func dequeueBuffer() -> CVPixelBuffer?
     func append(buffer: CVPixelBuffer, pts: CMTime) throws
-    func finish() throws
+    /// `endTime` ends the session at that file time. nil lets the last
+    /// sample set the end.
+    func finish(endTime: CMTime?) throws
+}
+
+extension AnyVideoSink {
+    public func finish() throws { try finish(endTime: nil) }
 }
 
 /// Short codec name for the engine's `[engine] output:` log line. Keeps

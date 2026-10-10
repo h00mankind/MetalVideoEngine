@@ -211,8 +211,8 @@ visibility windows, subtitles, fades, and the audio mix keep their
 output-timeline times, so the range shows what the full render shows
 there. An `endSeconds` after the end of the timeline stops at the end.
 `[meta] sourceSecs` and the `src=` values are relative to the range, so the
-bridge progress goes from 0 to 1. A range with a playlist (`inputs`) fails
-with `range is not supported with inputs`, and a range that starts at or
+bridge progress goes from 0 to 1. A range with a playlist (`inputs` with
+more than one segment) fails with `range is not supported with inputs`, and a range that starts at or
 after the end of the timeline fails; both exit 1 and write no file. The
 noise and grain seed counts frames from the start of the range, so a job
 with `noise` or `grain` does not match the full render pixel for pixel.

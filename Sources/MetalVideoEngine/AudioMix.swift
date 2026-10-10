@@ -404,7 +404,7 @@ public final class MuxWriter: AnyVideoSink {
         }
     }
 
-    public func finish() throws {
+    public func finish(endTime: CMTime?) throws {
         // Audio was scheduled via requestMediaDataWhenReady in init —
         // it feeds itself in the background. Close the video side
         // first, then wait for the audio feeder to drain, then close
@@ -416,6 +416,7 @@ public final class MuxWriter: AnyVideoSink {
         // that state will trap inside AVFoundation (SIGTRAP / exit 133).
         videoInput.markAsFinished()
         audioDoneSem.wait()
+        if let endTime { writer.endSession(atSourceTime: endTime) }
         writer.finishWriting { [weak self] in self?.semaphore.signal() }
         semaphore.wait()
         if writer.status == .failed {

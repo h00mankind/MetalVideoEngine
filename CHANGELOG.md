@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JobSpec renders only that part of the output timeline. The decoder seeks
   to the start; keyframes, windows, subtitles, fades, and the audio mix
   keep their output-timeline times. `[meta] sourceSecs` reports the range
-  length. Single-input jobs only: a playlist with a range fails with
-  `range is not supported with inputs`. `mve inspect` reports range faults
+  length. One segment only: `inputs` with more than one segment and a range
+  fails with `range is not supported with inputs`. `mve inspect` reports range faults
   as `invalidRange` errors. A JobSpec without `range` takes the same path
   as before.
 - **`mve strip <spec.json> --from <s> --to <s> --out <png>`.** Contact sheet

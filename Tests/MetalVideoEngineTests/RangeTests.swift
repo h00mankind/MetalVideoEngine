@@ -30,6 +30,15 @@ final class RangeTests: XCTestCase {
         XCTAssertEqual(range.duration, 2)
     }
 
+    func testContainsTheStartButNotTheEnd() throws {
+        let range = try XCTUnwrap(RenderRange(startSeconds: 0, endSeconds: 1.00005))
+        XCTAssertTrue(range.contains(0))
+        XCTAssertTrue(range.contains(1.0))
+        XCTAssertFalse(range.contains(1.00005))
+        let next = try XCTUnwrap(RenderRange(startSeconds: 1.00005, endSeconds: 2))
+        XCTAssertFalse(next.contains(1.0))
+    }
+
     func testAudioTrimKeepsTheRange() {
         // 4 stereo frames per second, 3 s: frame i holds the value i.
         let samples = (0..<12).flatMap { [Float($0), Float($0)] }

@@ -113,7 +113,7 @@ export type MetalJobSpec = {
   /**
    * Render only this part of the output timeline, in seconds. Keyframes,
    * windows, subtitles and audio keep their output-timeline times. Not
-   * supported with `inputs`.
+   * supported when `inputs` has more than one segment.
    */
   range?: { startSeconds: number; endSeconds: number };
   grade?: MetalGrade;
