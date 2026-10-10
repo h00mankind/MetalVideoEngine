@@ -386,6 +386,15 @@ public final class RenderEngine {
             )
         }
 
+        /// Transition windows on the output timeline: the interval where
+        /// segment i and i+1 both play. A cut or a dip to black has none.
+        var transitionWindows: [Range<Double>] {
+            transitions.indices.compactMap { i in
+                guard let tr = transitions[i], tr.overlaps, tr.duration > 0 else { return nil }
+                return offsets[i + 1]..<(offsets[i + 1] + tr.duration)
+            }
+        }
+
         /// Segment containing output-timeline second `t` (the LATEST
         /// segment whose span covers it — during an overlap the probe
         /// resolves to the incoming segment).
@@ -813,6 +822,29 @@ public final class RenderEngine {
         log: @escaping (String) -> Void = { _ in }
     ) throws {
         let started = Date()
+        let (cgImage, foundPts) = try renderFrameImage(req, atSeconds: target, log: log)
+        try Self.writePNG(cgImage, to: outURL)
+        let wall = Date().timeIntervalSince(started)
+        log(String(format: "[done-frame] pts=%.3fs  out=%@  wall=%.2fs",
+                   foundPts, outURL.path, wall))
+    }
+
+    /// Duration of the output timeline and its transition windows, for
+    /// callers that pick probe times (`mve strip`).
+    public func outputTimeline(
+        _ req: Request
+    ) throws -> (duration: Double, transitionWindows: [Range<Double>]) {
+        let timeline = try Timeline.resolve(req)
+        return (timeline.totalOutSecs, timeline.transitionWindows)
+    }
+
+    /// The frame probe without the PNG: composite one frame at PTS ≥
+    /// `atSeconds` and return it with the PTS it landed on.
+    public func renderFrameImage(
+        _ req: Request,
+        atSeconds target: Double,
+        log: @escaping (String) -> Void = { _ in }
+    ) throws -> (image: CGImage, pts: Double) {
         // The probe target is an OUTPUT-timeline second. Resolve which
         // segment covers it (playlists) and probe that segment at the
         // corresponding local time; every keyframe track still evaluates
@@ -864,17 +896,28 @@ public final class RenderEngine {
         // back, and break.
         var attempts = 0
         var foundPts: Double = -1
+        var held: VideoDecoder.Frame?
         while true {
             attempts += 1
-            guard let frame = decoder.nextFrame() else {
+            let frame: VideoDecoder.Frame
+            if let f = decoder.nextFrame() {
+                // Skip frames before the target. Don't run the compute pass —
+                // we're going to throw the result away anyway.
+                if CMTimeGetSeconds(f.presentationTime) < localTarget {
+                    held = f
+                    continue
+                }
+                frame = f
+            } else if let h = held {
+                // The target is after the last frame's PTS but inside the
+                // segment (its last frame interval): show the last frame.
+                frame = h
+            } else {
                 throw MVEError.pipelineStateFailed(
                     "renderFrame: ran out of frames before reaching target \(target)s (decoded \(attempts) frames)"
                 )
             }
             let localPts = CMTimeGetSeconds(frame.presentationTime)
-            // Skip frames before the target. Don't run the compute pass —
-            // we're going to throw the result away anyway.
-            if localPts < localTarget { continue }
             // Track evaluation time = output-timeline second of this frame.
             let pts = segOffset + localPts
             foundPts = pts
@@ -999,7 +1042,10 @@ public final class RenderEngine {
         ) else {
             throw MVEError.pipelineStateFailed("renderFrame: CGImage creation failed")
         }
+        return (cgImage, foundPts)
+    }
 
+    public static func writePNG(_ cgImage: CGImage, to outURL: URL) throws {
         // PNG-encode to disk. CGImageDestination handles all the chunking,
         // CRC, and IDAT compression — we just hand it the CGImage.
         guard let dest = CGImageDestinationCreateWithURL(
@@ -1011,10 +1057,6 @@ public final class RenderEngine {
         guard CGImageDestinationFinalize(dest) else {
             throw MVEError.pipelineStateFailed("renderFrame: PNG finalize failed")
         }
-
-        let wall = Date().timeIntervalSince(started)
-        log(String(format: "[done-frame] pts=%.3fs  out=%@  wall=%.2fs",
-                   foundPts, outURL.path, wall))
     }
 }
 
