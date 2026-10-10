@@ -62,5 +62,10 @@ let package = Package(
             path: "Sources/mve",
             linkerSettings: libassLinkerFlags()
         ),
+        .testTarget(
+            name: "MetalVideoEngineTests",
+            dependencies: ["MetalVideoEngine"],
+            path: "Tests/MetalVideoEngineTests"
+        ),
     ]
 )

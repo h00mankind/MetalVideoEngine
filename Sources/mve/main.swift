@@ -215,11 +215,40 @@ func executeFrame(_ spec: JobSpec) throws {
     exit(0)
 }
 
+/// Parse a spec ease string. An unknown name degrades to linear and is
+/// logged rather than failing the job, like an unknown transition type.
+func parseEase(_ raw: String?) -> Easing {
+    guard let raw else { return .linear }
+    if let ease = Easing.parse(raw) { return ease }
+    logLine("[job] warning: unknown ease '\(raw)' — using linear")
+    return .linear
+}
+
+/// Warn once per unknown keyframe ease in the spec. `Track.from` lives in
+/// the library, which has no logger, so the names are checked here before
+/// the tracks are built. Mirror finds every track list, including ones
+/// added later.
+func warnUnknownKeyframeEases(_ spec: JobSpec) {
+    func keyframeLists(_ container: Any?) -> [[JobSpec.KeyframeSpec]] {
+        guard let container else { return [] }
+        return Mirror(reflecting: container).children
+            .compactMap { $0.value as? [JobSpec.KeyframeSpec] }
+    }
+    var lists = (spec.overlays ?? []).flatMap { keyframeLists($0.animate) }
+    lists += (spec.texts ?? []).flatMap { keyframeLists($0.animate) }
+    lists += keyframeLists(spec.animate?.grade) + keyframeLists(spec.animate?.bypass)
+    var seen = Set<String>()
+    for key in lists.joined() {
+        if let raw = key.ease, seen.insert(raw).inserted { _ = parseEase(raw) }
+    }
+}
+
 /// Shared spec → RenderEngine.Request builder. Both job (full render)
 /// and frame (single-PTS render) modes consume the same fields; the
 /// only difference is which method on the engine is called next.
 func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderEngine.Request {
     let device = engine.ctx.device
+    warnUnknownKeyframeEases(spec)
 
     let (w, h, defaultBitrate) = JobHelpers.resolvePreset(spec.preset)
     let bitrate = spec.bitrate ?? defaultBitrate
@@ -239,7 +268,7 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
                         transition = RenderEngine.Transition(
                             kind: kind,
                             duration: t.duration ?? 0.5,
-                            ease: Easing(rawValue: t.ease ?? "linear") ?? .linear
+                            ease: parseEase(t.ease)
                         )
                     }
                 } else {
