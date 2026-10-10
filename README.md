@@ -228,7 +228,8 @@ on one PNG with the time under each cell. Use it to read an animation
 without a full render. The defaults are 6 columns and a cell width of
 270 px; the cell keeps the aspect of the output. The spec needs no `frame`
 block. A time with ` T` after it is inside a transition window: the frame
-probe shows the incoming segment unblended there. Exit 1 when `--to` is
+probe shows the incoming segment unblended there. `-n` and `--columns`
+accept 1 to 500, `--cell-width` 16 to 4096. Exit 1 when `--to` is
 after the end of the output timeline, 2 for a usage error.
 
 ### CLI: pre-flight check

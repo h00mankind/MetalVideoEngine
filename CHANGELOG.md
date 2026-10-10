@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--cell-width` (default 270) set the grid. A time inside a transition
   window has the suffix ` T`, because the frame probe does not blend there.
   `RenderEngine.renderFrame` is now `renderFrameImage` plus a PNG writer;
-  `mve frame` output is unchanged.
+  `mve frame` output is unchanged, except that a time inside the last
+  frame interval of a segment now shows the last frame. Before, the probe
+  failed there with "ran out of frames".
 - **`mve inspect <spec.json> [--json]`.** Pre-flight check of a JobSpec that
   decodes no frame and creates no Metal texture. It reports unreadable media
   paths, text fonts that CoreText replaces, text and image overlays that

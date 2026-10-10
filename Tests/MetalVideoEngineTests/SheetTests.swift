@@ -23,9 +23,11 @@ final class SheetTests: XCTestCase {
     }
 
     func testLabelMarksATransitionWindow() {
-        let windows = [19.0...20.0]
+        let windows = [19.0..<20.0]
         XCTAssertEqual(Sheet.label(at: 18.5, transitionWindows: windows), "18.50s")
         XCTAssertEqual(Sheet.label(at: 19.0, transitionWindows: windows), "19.00s T")
+        XCTAssertEqual(Sheet.label(at: 19.99, transitionWindows: windows), "19.99s T")
+        XCTAssertEqual(Sheet.label(at: 20.0, transitionWindows: windows), "20.00s")
         XCTAssertEqual(Sheet.label(at: 20.5, transitionWindows: windows), "20.50s")
     }
 
@@ -34,7 +36,7 @@ final class SheetTests: XCTestCase {
         var a = RenderEngine.Segment(url: url)
         a.transition = RenderEngine.Transition(kind: .crossfade, duration: 1)
         let t = RenderEngine.Timeline.layout(segments: [a, RenderEngine.Segment(url: url)], segSecs: [20, 6])
-        XCTAssertEqual(t.transitionWindows, [19.0...20.0])
+        XCTAssertEqual(t.transitionWindows, [19.0..<20.0])
         a.transition = RenderEngine.Transition(kind: .dipToBlack, duration: 1)
         let dip = RenderEngine.Timeline.layout(segments: [a, RenderEngine.Segment(url: url)], segSecs: [20, 6])
         XCTAssertEqual(dip.transitionWindows, [])

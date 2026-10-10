@@ -254,9 +254,11 @@ func runStrip(argv: [String]) {
             fail("unexpected argument \(a)", code: 2)
         }
     }
-    func int(_ name: String, default d: Int, min lo: Int) -> Int {
+    func int(_ name: String, default d: Int, in bounds: ClosedRange<Int>) -> Int {
         guard let raw = opts[name] else { return d }
-        guard let v = Int(raw), v >= lo else { fail("\(name) must be an integer of \(lo) or more", code: 2) }
+        guard let v = Int(raw), bounds.contains(v) else {
+            fail("\(name) must be an integer from \(bounds.lowerBound) to \(bounds.upperBound)", code: 2)
+        }
         return v
     }
     guard let specPath, let outPath = opts["--out"],
@@ -265,9 +267,9 @@ func runStrip(argv: [String]) {
           from.isFinite, to.isFinite, from >= 0, to >= from else {
         fail("--from and --to must be seconds with 0 <= from <= to", code: 2)
     }
-    let count = int("-n", default: 12, min: 1)
-    let columns = int("--columns", default: 6, min: 1)
-    let cellWidth = int("--cell-width", default: 270, min: 16)
+    let count = int("-n", default: 12, in: 1...500)
+    let columns = int("--columns", default: 6, in: 1...500)
+    let cellWidth = int("--cell-width", default: 270, in: 16...4096)
 
     let spec: JobSpec
     do { spec = try JSONDecoder().decode(JobSpec.self, from: Data(contentsOf: URL(fileURLWithPath: specPath))) }
@@ -277,14 +279,17 @@ func runStrip(argv: [String]) {
         let engine = try RenderEngine()
         let req = try buildRenderRequest(spec, engine: engine)
         let timeline = try engine.outputTimeline(req)
-        guard to <= timeline.duration + 1e-3 else {
+        guard to <= timeline.duration + 1e-6 else {
             fail(String(format: "--to %.2f is after the end of the output timeline (%.2f s)",
                         to, timeline.duration), code: 1)
         }
         let cells = try Sheet.times(from: from, to: to, count: count).map { t in
-            Sheet.Cell(
-                image: try engine.renderFrameImage(req, atSeconds: t).image,
-                label: Sheet.label(at: t, transitionWindows: timeline.transitionWindows))
+            let frame = try engine.renderFrameImage(req, atSeconds: t).image
+            guard let thumb = Sheet.thumbnail(frame, width: cellWidth) else {
+                fail("cannot scale the frame at \(t) s", code: 1)
+            }
+            return Sheet.Cell(image: thumb,
+                              label: Sheet.label(at: t, transitionWindows: timeline.transitionWindows))
         }
         guard let sheet = Sheet.compose(cells: cells, columns: columns, cellWidth: cellWidth) else {
             fail("cannot draw the sheet", code: 1)

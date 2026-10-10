@@ -23,7 +23,7 @@ public enum Sheet {
 
     /// Cell label: the time, with ` T` when it is inside a transition
     /// window. The frame probe shows the incoming segment unblended there.
-    public static func label(at t: Double, transitionWindows: [ClosedRange<Double>]) -> String {
+    public static func label(at t: Double, transitionWindows: [Range<Double>]) -> String {
         let time = String(format: "%.2fs", t)
         return transitionWindows.contains { $0.contains(t) } ? time + " T" : time
     }
@@ -51,6 +51,21 @@ public enum Sheet {
             height: rows * (cellHeight + labelHeight),
             rows: rows, cellHeight: cellHeight, labelHeight: labelHeight
         )
+    }
+
+    /// `image` drawn `width` px wide. A strip keeps the thumbnail of each
+    /// probe, not the full frame.
+    public static func thumbnail(_ image: CGImage, width: Int) -> CGImage? {
+        let height = max(1, Int((Double(width) * Double(image.height) / Double(image.width)).rounded()))
+        guard let cg = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        cg.interpolationQuality = .high
+        cg.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return cg.makeImage()
     }
 
     public static func compose(cells: [Cell], columns: Int, cellWidth: Int) -> CGImage? {
