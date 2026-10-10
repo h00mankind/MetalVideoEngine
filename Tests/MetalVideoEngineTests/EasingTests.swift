@@ -47,4 +47,13 @@ final class EasingTests: XCTestCase {
             XCTAssertNil(Easing.parse(bad), bad)
         }
     }
+
+    func testBezierStaysAccurateWhereTheTimeCurveIsFlat() {
+        // x(t) = 1 - (1-t)^3 and y(t) = t^3 for cubicBezier(1,0,1,0).
+        let ease = Easing.cubicBezier(1, 0, 1, 0)
+        for t in [0.9, 0.99, 0.996] as [Double] {
+            let x = Float(1 - pow(1 - t, 3))
+            XCTAssertEqual(ease.apply(x), Float(pow(t, 3)), accuracy: 0.002)
+        }
+    }
 }

@@ -83,7 +83,9 @@ public enum Easing: Equatable {
         func sampleY(_ t: Double) -> Double { ((ay * t + by) * t + cy) * t }
         func slopeX(_ t: Double) -> Double { (3 * ax * t + 2 * bx) * t + cx }
 
-        let epsilon = 1e-7
+        // Tight on purpose: where the x curve is flat (x1 or x2 at 0 or 1)
+        // a small x error is a large y error.
+        let epsilon = 1e-12
         var t = x
         for _ in 0..<8 {
             let err = sampleX(t) - x
