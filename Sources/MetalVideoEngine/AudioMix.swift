@@ -111,43 +111,62 @@ public enum AudioMix {
     /// optional music (gain = spec.musicVolume). Output length is
     /// narration length when `truncateToNarration` is true (matches
     /// render-final's `amix=duration=first` + `-shortest`).
+    ///
+    /// `clamped` counts the samples the sum pushed outside -1...1 (the
+    /// mix clips them), inside `spec.trim` when one is set. Logs the
+    /// levels of the returned buffer as one `[audio] mix` line.
     public static func mix(spec: Spec,
                            truncateToNarration: Bool = true,
                            log: (String) -> Void = { _ in }) throws
-        -> (samples: [Float], sampleRate: Double) {
-        let full = try mixWhole(spec: spec, truncateToNarration: truncateToNarration, log: log)
-        guard let trim = spec.trim else { return full }
-        return (trimmed(full.samples, sampleRate: full.sampleRate, to: trim), full.sampleRate)
+        -> (samples: [Float], sampleRate: Double, clamped: Int) {
+        var nar = try decodePCM(url: spec.narrationURL, log: log)
+        let window = spec.trim.map {
+            sampleWindow(frames: nar.samples.count / 2, sampleRate: nar.sampleRate, range: $0)
+        } ?? 0..<nar.samples.count
+        var clamped = 0
+        if spec.readsMusic, let musicURL = spec.musicURL {
+            let cap = truncateToNarration ? Double(nar.samples.count) / nar.sampleRate / 2.0 : nil
+            let music = try decodePCM(url: musicURL, sampleRate: nar.sampleRate, cap: cap, log: log)
+            clamped = sum(into: &nar.samples, music: music.samples,
+                          gain: spec.musicVolume, countIn: window)
+        }
+        let samples = spec.trim == nil ? nar.samples : Array(nar.samples[window])
+        let levels = AudioAnalysis.measure(samples: samples, sampleRate: nar.sampleRate)
+        log(String(format: "[audio] mix lufs=%.1f peak=%.1fdBFS clamped=%d",
+                   levels.lufs, levels.peakDBFS, clamped))
+        if clamped > 0 {
+            log("[audio] warning: the mix clips \(clamped) samples; decrease audio.musicVolume")
+        }
+        return (samples, nar.sampleRate, clamped)
+    }
+
+    /// The sample indices of interleaved stereo audio inside `range`
+    /// seconds, clamped to `frames`.
+    static func sampleWindow(frames: Int, sampleRate: Double, range: Range<Double>) -> Range<Int> {
+        let lo = min(frames, max(0, Int((range.lowerBound * sampleRate).rounded())))
+        let hi = min(frames, max(lo, Int((range.upperBound * sampleRate).rounded())))
+        return (lo * 2)..<(hi * 2)
     }
 
     /// The part of interleaved stereo `samples` inside `range` seconds.
     static func trimmed(_ samples: [Float], sampleRate: Double, to range: Range<Double>) -> [Float] {
-        let frames = samples.count / 2
-        let lo = min(frames, max(0, Int((range.lowerBound * sampleRate).rounded())))
-        let hi = min(frames, max(lo, Int((range.upperBound * sampleRate).rounded())))
-        return Array(samples[(lo * 2)..<(hi * 2)])
+        Array(samples[sampleWindow(frames: samples.count / 2, sampleRate: sampleRate, range: range)])
     }
 
-    private static func mixWhole(spec: Spec,
-                                 truncateToNarration: Bool,
-                                 log: (String) -> Void) throws
-        -> (samples: [Float], sampleRate: Double) {
-        let nar = try decodePCM(url: spec.narrationURL, log: log)
-        guard spec.readsMusic, let musicURL = spec.musicURL else {
-            return nar
-        }
-        let cap = truncateToNarration ? Double(nar.samples.count) / nar.sampleRate / 2.0 : nil
-        let music = try decodePCM(url: musicURL, sampleRate: nar.sampleRate, cap: cap, log: log)
-        var out = nar.samples
-        let n = min(out.count, music.samples.count)
-        let g = spec.musicVolume
-        // Naive sample-sum + clamp. Both stems are already at the same
-        // SR / channel layout so we just walk indices.
+    /// Add `music * gain` to `out` and clamp each sum to -1...1. Both
+    /// stems are already at the same SR / channel layout so we just walk
+    /// indices. Returns how many sums inside `countIn` the clamp changed.
+    static func sum(into out: inout [Float], music: [Float], gain: Float,
+                    countIn: Range<Int>) -> Int {
+        let n = min(out.count, music.count)
+        var clamped = 0
         for i in 0..<n {
-            let v = out[i] + music.samples[i] * g
-            out[i] = max(-1, min(1, v))
+            let v = out[i] + music[i] * gain
+            let c = max(-1, min(1, v))
+            if c != v, countIn.contains(i) { clamped += 1 }
+            out[i] = c
         }
-        return (out, nar.sampleRate)
+        return clamped
     }
 }
 

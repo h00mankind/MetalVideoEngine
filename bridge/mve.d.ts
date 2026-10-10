@@ -132,12 +132,24 @@ export type MetalRunEvents = {
   signal?: AbortSignal;
 };
 
+/** Levels of the audio mix the job wrote, from the `[audio] mix` line. */
+export type MetalAudioLevels = {
+  /** Integrated loudness (ITU-R BS.1770). `null` for silence. */
+  lufs: number | null;
+  /** Sample peak in dBFS. `null` for silence. */
+  peakDbfs: number | null;
+  /** Samples the mix clipped. Above 0 means audible distortion is possible. */
+  clamped: number;
+};
+
 export type MetalRunStats = {
   frames: number;
   sourceSecs: number;
   wallSecs: number;
   /** Realtime ratio. */
   speed: number;
+  /** Present when the job has an `audio` block and the binary reports levels. */
+  audio?: MetalAudioLevels;
 };
 
 /**
