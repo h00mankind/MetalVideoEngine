@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`mve strip <spec.json> --from <s> --to <s> --out <png>`.** Contact sheet
+  of frame probes: `-n` cells (default 12) at evenly spaced output-timeline
+  times on one PNG, each with its time. `--columns` (default 6) and
+  `--cell-width` (default 270) set the grid. A time inside a transition
+  window has the suffix ` T`, because the frame probe does not blend there.
+  `RenderEngine.renderFrame` is now `renderFrameImage` plus a PNG writer;
+  `mve frame` output is unchanged.
 - **`mve inspect <spec.json> [--json]`.** Pre-flight check of a JobSpec that
   decodes no frame and creates no Metal texture. It reports unreadable media
   paths, text fonts that CoreText replaces, text and image overlays that

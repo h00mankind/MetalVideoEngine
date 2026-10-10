@@ -20,6 +20,11 @@ func usage() -> Never {
       mve inspect <spec.json> [--json]
                                 pre-flight check of a spec; decodes no frame.
                                 Exit 0 = no error, 3 = one or more errors.
+      mve strip <spec.json> --from <s> --to <s> --out <png>
+                [-n 12] [--columns 6] [--cell-width 270]
+                                contact sheet: -n frame probes from --from to
+                                --to on one PNG, each with its time. A time
+                                with " T" is inside a transition window.
       mve libass --ass <path> --time-ms <int> --out <png> [--w 1080 --h 1920]
       mve text --text <str> --out <png> [text options]
 
@@ -85,6 +90,7 @@ case "render": runOneShot(argv: argv)
 case "job":    runJob(argv: argv)
 case "frame":  runFrame(argv: argv)
 case "inspect": runInspect(argv: argv)
+case "strip":  runStrip(argv: argv)
 case "libass": runLibassProbe(argv: argv)
 case "text":   runTextProbe(argv: argv)
 default:       usage()
@@ -220,6 +226,76 @@ func runInspect(argv: [String]) {
         logLine("inspect: \(errors) error(s), \(diagnostics.count - errors) warning(s)")
     }
     exit(errors > 0 ? 3 : 0)
+}
+
+/// Contact sheet: `-n` frame probes between `--from` and `--to` on one
+/// PNG. Exit 2 for a usage error, 1 when the range or a probe fails.
+func runStrip(argv: [String]) {
+    func fail(_ msg: String, code: Int32) -> Never {
+        logLine("strip: \(msg)")
+        exit(code)
+    }
+    let valued = ["--from", "--to", "-n", "--out", "--columns", "--cell-width"]
+    var opts: [String: String] = [:]
+    var specPath: String?
+    var i = 2
+    while i < argv.count {
+        let a = argv[i]
+        if valued.contains(a) {
+            guard i + 1 < argv.count else { fail("\(a) needs a value", code: 2) }
+            opts[a] = argv[i + 1]
+            i += 2
+        } else if a.hasPrefix("-") {
+            fail("unknown option \(a)", code: 2)
+        } else if specPath == nil {
+            specPath = a
+            i += 1
+        } else {
+            fail("unexpected argument \(a)", code: 2)
+        }
+    }
+    func int(_ name: String, default d: Int, min lo: Int) -> Int {
+        guard let raw = opts[name] else { return d }
+        guard let v = Int(raw), v >= lo else { fail("\(name) must be an integer of \(lo) or more", code: 2) }
+        return v
+    }
+    guard let specPath, let outPath = opts["--out"],
+          let fromRaw = opts["--from"], let toRaw = opts["--to"] else { usage() }
+    guard let from = Double(fromRaw), let to = Double(toRaw),
+          from.isFinite, to.isFinite, from >= 0, to >= from else {
+        fail("--from and --to must be seconds with 0 <= from <= to", code: 2)
+    }
+    let count = int("-n", default: 12, min: 1)
+    let columns = int("--columns", default: 6, min: 1)
+    let cellWidth = int("--cell-width", default: 270, min: 16)
+
+    let spec: JobSpec
+    do { spec = try JSONDecoder().decode(JobSpec.self, from: Data(contentsOf: URL(fileURLWithPath: specPath))) }
+    catch { fail("cannot read spec \(specPath): \(error)", code: 2) }
+
+    do {
+        let engine = try RenderEngine()
+        let req = try buildRenderRequest(spec, engine: engine)
+        let timeline = try engine.outputTimeline(req)
+        guard to <= timeline.duration + 1e-3 else {
+            fail(String(format: "--to %.2f is after the end of the output timeline (%.2f s)",
+                        to, timeline.duration), code: 1)
+        }
+        let cells = try Sheet.times(from: from, to: to, count: count).map { t in
+            Sheet.Cell(
+                image: try engine.renderFrameImage(req, atSeconds: t).image,
+                label: Sheet.label(at: t, transitionWindows: timeline.transitionWindows))
+        }
+        guard let sheet = Sheet.compose(cells: cells, columns: columns, cellWidth: cellWidth) else {
+            fail("cannot draw the sheet", code: 1)
+        }
+        try RenderEngine.writePNG(sheet, to: URL(fileURLWithPath: outPath))
+        logLine("[done-strip] cells=\(count)  \(sheet.width)x\(sheet.height)  out=\(outPath)")
+    } catch {
+        fail("\(error)", code: 1)
+    }
+    // Same hard exit as executeFrame.
+    exit(0)
 }
 
 func executeJob(_ spec: JobSpec) throws {

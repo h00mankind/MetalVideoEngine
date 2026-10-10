@@ -215,6 +215,22 @@ The CLI logs progress to stderr in a stable format:
 [done] frames=4080  src=136.49s  wall=20.81s  speed=6.53x
 ```
 
+### CLI: contact sheet
+
+```sh
+mve strip /abs/path/to/spec.json --from 0 --to 2 --out /tmp/strip.png
+mve strip spec.json --from 18 --to 20.5 -n 6 --columns 3 --cell-width 540 --out strip.png
+```
+
+`strip` runs the frame probe at `-n` evenly spaced output-timeline times
+(default 12), the first at `--from` and the last at `--to`, and draws them
+on one PNG with the time under each cell. Use it to read an animation
+without a full render. The defaults are 6 columns and a cell width of
+270 px; the cell keeps the aspect of the output. The spec needs no `frame`
+block. A time with ` T` after it is inside a transition window: the frame
+probe shows the incoming segment unblended there. Exit 1 when `--to` is
+after the end of the output timeline, 2 for a usage error.
+
 ### CLI: pre-flight check
 
 ```sh
@@ -309,6 +325,7 @@ needed. That mode is useful as a local smoke test. The default fixture is
   - `LUT.swift`, `Overlay.swift`,
     `Fonts.swift`, `Job.swift`        — feature modules
   - `Inspect.swift`                   — `mve inspect` pre-flight check
+  - `Sheet.swift`                     — `mve strip` contact sheet
   - `Encoder.swift`, `AudioMix.swift` — VT encode + audio mux
 - `Sources/mve/main.swift`            — CLI entry point
 - `Sources/CLibass/`                  — libass module shim
