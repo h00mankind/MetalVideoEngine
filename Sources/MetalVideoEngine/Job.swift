@@ -16,7 +16,14 @@ import simd
 /// `output` / `preset` set produces a clean letterbox render with no
 /// bypass and no audio.
 public struct JobSpec: Codable {
-    public var input: String
+    /// Single-input form. Either `input` or `inputs` is required;
+    /// `inputs` wins when both are present.
+    public var input: String?
+    /// Playlist form: segments rendered back-to-back on one output
+    /// timeline, with an optional transition at each boundary. Grade,
+    /// bypass, subtitles, overlays, and animation all evaluate on the
+    /// OUTPUT timeline, spanning segment boundaries.
+    public var inputs: [SegmentSpec]?
     public var output: String
     public var preset: String           // "720p" | "1080p" | "<W>x<H>"
     public var bitrate: Int?            // average bitrate, bits/sec
@@ -38,6 +45,9 @@ public struct JobSpec: Codable {
     public var overlays: [OverlaySpec]? // logo PNG(s)
     public var texts: [TextSpec]?       // channel name + extra texts
     public var audio: AudioSpec?
+    /// Job-level animation: keyframe tracks over grade/bypass fields
+    /// plus whole-frame fade in/out. See `AnimateSpec`.
+    public var animate: AnimateSpec?
 
     /// Single-frame mode override. When the engine is invoked as
     /// `mve frame <spec.json>`, this block tells it which PTS
@@ -85,11 +95,97 @@ public struct JobSpec: Codable {
         public var fontsDir: String?
     }
 
+    /// One playlist segment. `transition` describes the boundary into
+    /// the NEXT segment (ignored on the last segment).
+    public struct SegmentSpec: Codable {
+        public var path: String
+        public var transition: TransitionSpec?
+    }
+
+    /// Boundary transition. Types: "cut" (default), "crossfade",
+    /// "dipToBlack", "wipeLeft"/"wipeRight"/"wipeUp"/"wipeDown",
+    /// "slideLeft"/"slideRight"/"slideUp"/"slideDown" — directions name
+    /// the edge the incoming clip enters from. `duration` defaults to
+    /// 0.5s and is clamped to the shorter neighbouring segment.
+    /// Overlapping types (crossfade/wipe/slide) shorten the output by
+    /// their duration; cut and dipToBlack don't. `ease` shapes the
+    /// progress curve (same names as keyframe easing, default linear).
+    public struct TransitionSpec: Codable {
+        public var type: String
+        public var duration: Double?
+        public var ease: String?
+    }
+
+    /// One point on a keyframe track: value `v` at output-timeline
+    /// second `t`, interpolated from the previous key with `ease`
+    /// ("hold" | "linear" | "easeIn" | "easeOut" | "easeInOut",
+    /// default linear). The engine has no animation presets — the host
+    /// compiles its named animations down to these lists.
+    public struct KeyframeSpec: Codable {
+        public var t: Double
+        public var v: Float
+        public var ease: String?
+        public init(t: Double, v: Float, ease: String? = nil) {
+            self.t = t; self.v = v; self.ease = ease
+        }
+    }
+
+    /// Keyframe tracks over one overlay's animatable properties. All
+    /// optional — absent tracks leave the property static.
+    ///   - `opacity`: multiplied with the overlay's base opacity (0..1)
+    ///   - `offsetX`/`offsetY`: additive offset from the anchored
+    ///     position, PlayRes pixels
+    ///   - `scale`: about the rect center; 1.0 = natural size
+    ///   - `srcCenterX`/`srcCenterY`/`srcZoom` (image overlays only):
+    ///     Ken Burns source window — normalized center (default 0.5)
+    ///     and zoom ≥ 1 (default 1). The engine derives a
+    ///     cover-semantics window so keyframes can't skew the image.
+    public struct OverlayAnimateSpec: Codable {
+        public var opacity: [KeyframeSpec]?
+        public var offsetX: [KeyframeSpec]?
+        public var offsetY: [KeyframeSpec]?
+        public var scale: [KeyframeSpec]?
+        public var srcCenterX: [KeyframeSpec]?
+        public var srcCenterY: [KeyframeSpec]?
+        public var srcZoom: [KeyframeSpec]?
+    }
+
+    /// Job-level animation: keyframe tracks over grade/bypass scalars
+    /// (a keyed field overrides its static value for the whole render)
+    /// plus whole-frame fade from/to black. Fades composite ABOVE
+    /// subtitles and overlays.
+    public struct AnimateSpec: Codable {
+        public var grade: GradeTracksSpec?
+        public var bypass: BypassTracksSpec?
+        public var fadeInSeconds: Double?
+        public var fadeOutSeconds: Double?
+
+        public struct GradeTracksSpec: Codable {
+            public var brightness: [KeyframeSpec]?
+            public var contrast: [KeyframeSpec]?
+            public var saturation: [KeyframeSpec]?
+            public var tint: [KeyframeSpec]?
+            public var lutMix: [KeyframeSpec]?
+        }
+        public struct BypassTracksSpec: Codable {
+            public var zoom: [KeyframeSpec]?
+            public var colorTintDeg: [KeyframeSpec]?  // degrees, like BypassSpec
+            public var noise: [KeyframeSpec]?
+            public var grain: [KeyframeSpec]?
+            public var edgeBlur: [KeyframeSpec]?
+        }
+    }
+
     /// Image overlay (typically the user's logo/watermark). The engine
     /// scales the image to `widthFraction * canvas.width`, places it at
     /// the numpad `anchor` cell + (offsetX, offsetY) PlayRes pixels, and
     /// composites at the configured opacity. Output aspect ratio is
     /// preserved — height derives from the loaded image's natural ratio.
+    ///
+    /// `startSeconds`/`endSeconds` bound the overlay's visibility on
+    /// the output timeline (absent → always visible). `animate` holds
+    /// keyframe tracks; times inside it are absolute output-timeline
+    /// seconds, not window-relative.
     public struct OverlaySpec: Codable {
         public var imagePath: String
         public var anchor: Int?         // numpad 1..9
@@ -97,6 +193,9 @@ public struct JobSpec: Codable {
         public var offsetY: Float?
         public var widthFraction: Float? // 0..1 of canvas width
         public var opacity: Float?      // 0..1
+        public var startSeconds: Double?
+        public var endSeconds: Double?
+        public var animate: OverlayAnimateSpec?
     }
 
     /// Single-line text overlay (channel name + extra texts). Rendered
@@ -117,6 +216,11 @@ public struct JobSpec: Codable {
         public var bgColorHex: String?
         public var bgOpacity: Float?    // 0..1 — pill enabled when > 0
         public var bgRadius: Float?     // pill corner radius, PlayRes px (default 8)
+        /// Visibility window + keyframe tracks — same semantics as
+        /// `OverlaySpec` (src* tracks are ignored for text).
+        public var startSeconds: Double?
+        public var endSeconds: Double?
+        public var animate: OverlayAnimateSpec?
     }
 
     public struct AudioSpec: Codable {

@@ -188,8 +188,9 @@ public final class ParallelRenderEngine {
         // value 0 + priming signals — see the matching comment in
         // RenderEngine.render: disposing a semaphore below its creation
         // value traps, and the drain loop below parks it at 0.
+        let inflightDepth = max(1, maxInflight)
         let inflight = DispatchSemaphore(value: 0)
-        for _ in 0..<maxInflight { inflight.signal() }
+        for _ in 0..<inflightDepth { inflight.signal() }
         let encoderLock = NSLock()
         let errorLock = NSLock()
         var firstError: Error?
@@ -241,7 +242,7 @@ public final class ParallelRenderEngine {
             cb.commit()
             frameCount += 1
         }
-        for _ in 0..<maxInflight { inflight.wait() }
+        for _ in 0..<inflightDepth { inflight.wait() }
         if let e = firstError { throw e }
         try encoder.finish()
         log("[parallel] chunk \(chunkIndex) done: \(frameCount) frames")

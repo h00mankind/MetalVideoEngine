@@ -67,7 +67,7 @@ public final class LibassRenderer {
     /// captions change rarely only ever creates one or two.
     private var textureRing: [MTLTexture] = []
     private var ringCursor = 0
-    private let ringSize = 8
+    private let ringSize: Int
 
     /// detect_change cache: the texture (or nil for "no active cue")
     /// returned by the previous `renderTexture` call. When libass
@@ -84,9 +84,15 @@ public final class LibassRenderer {
     public let canvasWidth: Int
     public let canvasHeight: Int
 
-    public init(canvasWidth: Int, canvasHeight: Int) throws {
+    /// `inflightDepth` is the maximum number of engine command buffers
+    /// that may be in flight sampling textures this renderer returned —
+    /// pass the render job's `maxInflight`. The ring must outsize it or
+    /// a recycled slot can be `replace()`d while a live command buffer
+    /// still reads it (torn subtitles when every frame changes).
+    public init(canvasWidth: Int, canvasHeight: Int, inflightDepth: Int = 5) throws {
         self.canvasWidth = canvasWidth
         self.canvasHeight = canvasHeight
+        self.ringSize = max(1, inflightDepth) + 3
 
         guard let lib = ass_library_init() else {
             throw MVEError.pipelineStateFailed("libass: ass_library_init failed")
@@ -154,6 +160,9 @@ public final class LibassRenderer {
             throw MVEError.pipelineStateFailed("libass: ass_read_memory returned NULL")
         }
         self.track = newTrack
+        // New track → the previous detect_change baseline is meaningless.
+        hasRenderedOnce = false
+        lastTexture = nil
     }
 
     // MARK: - Per-frame render
@@ -166,9 +175,11 @@ public final class LibassRenderer {
             throw MVEError.pipelineStateFailed("libass: render called before loadTrack")
         }
 
-        // detect_change is informational only; we recompose every frame
-        // because integrating change-tracking into the engine's command-buffer
-        // model isn't worth the complexity at our framerates.
+        // This call advances libass's internal previous-frame state, so
+        // renderTexture's detect_change cache can no longer trust its
+        // baseline — invalidate it. (The engine only ever uses
+        // renderTexture; this matters for hosts that mix the two.)
+        hasRenderedOnce = false
         var detectChange: Int32 = 0
         guard let head = ass_render_frame(rend, trk, timeMs, &detectChange) else {
             return nil
@@ -229,7 +240,18 @@ public final class LibassRenderer {
         }
         composeImages(head, into: &scratch, stride: stride)
 
-        let tex = try nextRingTexture(device: device)
+        // ass_render_frame already advanced libass's previous-frame
+        // state above, so if the upload fails the next call would see
+        // detect_change == 0 and serve the PREVIOUS cue's stale texture
+        // forever (the engine swallows this throw with `try?`).
+        // Invalidate the cache so the next call recomposes.
+        let tex: MTLTexture
+        do {
+            tex = try nextRingTexture(device: device)
+        } catch {
+            hasRenderedOnce = false
+            throw error
+        }
         let region = MTLRegionMake2D(0, 0, canvasWidth, canvasHeight)
         scratch.withUnsafeBytes { ptr in
             tex.replace(region: region, mipmapLevel: 0,

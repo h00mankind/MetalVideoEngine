@@ -1,0 +1,23 @@
+# Domain glossary
+
+- **Job / JobSpec** — the JSON render spec consumed by `mve job`; the stable integration surface for non-Swift hosts.
+- **Host** — the caller (Node bridge, editor app) that authors a JobSpec. Owns content and timing decisions; never rasterizes per-frame.
+- **Engine** — the single-pipeline renderer: decode → main pass → composites → encode, one command buffer per frame.
+- **Main pass** — the fused compute kernel doing scale + letterbox + grade + bypass + LUT in one dispatch.
+- **Grade** — color controls: brightness, contrast, saturation, tint, LUT mix.
+- **Bypass** — content-fingerprint effects: mirror, zoom, crop, hue rotation, noise, grain, edge blur.
+- **Overlay** — a BGRA texture composited over the frame after subtitles: logo images and rasterized text.
+- **Composite** — the alpha-over blend of an overlay at a destination rect with an opacity, one compute dispatch per overlay per frame.
+- **PlayRes** — the 1080×1920 reference coordinate space job specs use for positions/offsets; scaled to the actual canvas.
+- **Anchor** — numpad 1–9 position cell for an overlay, plus PlayRes pixel offsets.
+- **Output timeline** — seconds from the start of the output video. Equals source PTS for a single-input job.
+- **Keyframe** — a `(atSeconds, value, easing)` point on the output timeline for one animatable parameter.
+- **Track** — the sorted keyframe list for one parameter; evaluated per frame to a concrete value.
+- **Animation preset** — a named overlay animation (fade, slide, pop) that expands to keyframe tracks internally.
+- **Visibility window** — an overlay's `startSeconds`/`endSeconds`; outside it the overlay is not composited.
+- **Ken Burns** — animating the source window (pan/zoom) of a photo overlay over its visibility window.
+- **Segment** — one input clip in a multi-input playlist job.
+- **Transition** — the blend between two adjacent segments (crossfade, wipe, slide) over a transition window.
+- **Transition window** — the overlap interval where both segments' decoders run and frames are blended.
+- **Chunk** — a temporal slice of the source used by the parallel engine; grade-only feature subset today.
+- **Frame probe** — `mve frame`: render one frame at a PTS to PNG for preview diffing in the editor.

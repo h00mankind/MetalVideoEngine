@@ -53,17 +53,34 @@ public final class FilterGraph {
     /// Overlay rect spec used by image/text/subtitle composites.
     /// `clipRight` ∈ [0,1] horizontally clips the overlay — used by
     /// karaoke sweep mode. Default 1.0 (full draw).
+    /// `srcOrigin`/`srcSize` select a normalized sub-window of the
+    /// overlay texture to sample — the Ken Burns pan/zoom window. The
+    /// default (0,0)–(1,1) samples the full texture and is pixel-
+    /// identical to the pre-window kernel.
     public struct OverlayParams {
         var dstSize: SIMD2<Float>
         var rectOrigin: SIMD2<Float>
         var rectSize: SIMD2<Float>
         var opacity: Float
         var clipRight: Float
+        var srcOrigin: SIMD2<Float>
+        var srcSize: SIMD2<Float>
+    }
+
+    /// Matches `TransitionParams` in Shaders.swift, byte-for-byte
+    /// (same SIMD2/scalar alignment rules as GeomParams).
+    struct TransitionParams {
+        var dstSize: SIMD2<Float>
+        var progress: Float
+        var kind: UInt32
+        var direction: SIMD2<Float>
+        var softness: Float
     }
 
     let ctx: MetalContext
     let mainPipeline: MTLComputePipelineState
     let overlayPipeline: MTLComputePipelineState
+    let transitionPipeline: MTLComputePipelineState
     public let identityLUT: MTLTexture
 
     public init(ctx: MetalContext, lutSize: Int = 33) throws {
@@ -83,6 +100,14 @@ public final class FilterGraph {
             self.overlayPipeline = try ctx.device.makeComputePipelineState(function: ofn)
         } catch {
             throw MVEError.pipelineStateFailed("overlay_composite: \(error)")
+        }
+        guard let tfn = ctx.library.makeFunction(name: "transition_blend") else {
+            throw MVEError.missingFunction("transition_blend")
+        }
+        do {
+            self.transitionPipeline = try ctx.device.makeComputePipelineState(function: tfn)
+        } catch {
+            throw MVEError.pipelineStateFailed("transition_blend: \(error)")
         }
         self.identityLUT = try Self.makeIdentityLUT(ctx: ctx, size: lutSize)
     }
@@ -171,7 +196,9 @@ public final class FilterGraph {
         rectOrigin: SIMD2<Float>,
         rectSize: SIMD2<Float>,
         opacity: Float = 1.0,
-        clipRight: Float = 1.0
+        clipRight: Float = 1.0,
+        srcOrigin: SIMD2<Float> = SIMD2(0, 0),
+        srcSize: SIMD2<Float> = SIMD2(1, 1)
     ) {
         guard let cmd = commandBuffer.makeComputeCommandEncoder() else { return }
         cmd.label = "overlay_composite"
@@ -183,7 +210,9 @@ public final class FilterGraph {
             rectOrigin: rectOrigin,
             rectSize: rectSize,
             opacity: opacity,
-            clipRight: max(0, min(1, clipRight))
+            clipRight: max(0, min(1, clipRight)),
+            srcOrigin: srcOrigin,
+            srcSize: srcSize
         )
         cmd.setBytes(&p, length: MemoryLayout<OverlayParams>.stride, index: 0)
         let w = overlayPipeline.threadExecutionWidth
@@ -202,6 +231,40 @@ public final class FilterGraph {
         let gy = min(dst.height - oy, Int((rectOrigin.y + rectSize.y).rounded(.up)) - oy)
         guard gx > 0, gy > 0 else { cmd.endEncoding(); return }
         let grid = MTLSize(width: gx, height: gy, depth: 1)
+        cmd.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        cmd.endEncoding()
+    }
+
+    /// Blend segment B's processed frame (in `b`) over segment A's (in
+    /// `dst`, in place) by `progress` ∈ [0,1]. `kind`/`direction`/
+    /// `softness` select from the transition gallery — see the kernel
+    /// comment in Shaders.swift.
+    public func transitionBlend(
+        in commandBuffer: MTLCommandBuffer,
+        b: MTLTexture,
+        dst: MTLTexture,
+        progress: Float,
+        kind: UInt32,
+        direction: SIMD2<Float> = SIMD2(0, 0),
+        softness: Float = 0.04
+    ) {
+        guard let cmd = commandBuffer.makeComputeCommandEncoder() else { return }
+        cmd.label = "transition_blend"
+        cmd.setComputePipelineState(transitionPipeline)
+        cmd.setTexture(b, index: 0)
+        cmd.setTexture(dst, index: 1)
+        var p = TransitionParams(
+            dstSize: SIMD2<Float>(Float(dst.width), Float(dst.height)),
+            progress: max(0, min(1, progress)),
+            kind: kind,
+            direction: direction,
+            softness: max(0.001, softness)
+        )
+        cmd.setBytes(&p, length: MemoryLayout<TransitionParams>.stride, index: 0)
+        let w = transitionPipeline.threadExecutionWidth
+        let h = transitionPipeline.maxTotalThreadsPerThreadgroup / w
+        let tg = MTLSize(width: w, height: h, depth: 1)
+        let grid = MTLSize(width: dst.width, height: dst.height, depth: 1)
         cmd.dispatchThreads(grid, threadsPerThreadgroup: tg)
         cmd.endEncoding()
     }
