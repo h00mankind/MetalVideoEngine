@@ -352,6 +352,11 @@ public final class RenderEngine {
                 }
                 return CMTimeGetSeconds(asset.duration)
             }
+            return layout(segments: segments, segSecs: segSecs)
+        }
+
+        /// Pure timeline math over known segment durations.
+        static func layout(segments: [Segment], segSecs: [Double]) -> Timeline {
             // Clamp transition durations so a window can never outlast
             // either neighbouring segment. An overlapping transition
             // shortens the output: both segments play simultaneously

@@ -33,6 +33,9 @@ public enum AudioMix {
             self.musicVolume = max(0, min(1, musicVolume))
             self.bitrate = bitrate
         }
+
+        /// `mix` opens the music file only when this is true.
+        public var readsMusic: Bool { musicURL != nil && musicVolume > 0 }
     }
 
     /// PCM read helper: returns interleaved float32 stereo @ 44.1kHz
@@ -110,7 +113,7 @@ public enum AudioMix {
                            log: (String) -> Void = { _ in }) throws
         -> (samples: [Float], sampleRate: Double) {
         let nar = try decodePCM(url: spec.narrationURL, log: log)
-        guard let musicURL = spec.musicURL, spec.musicVolume > 0 else {
+        guard spec.readsMusic, let musicURL = spec.musicURL else {
             return nar
         }
         let cap = truncateToNarration ? Double(nar.samples.count) / nar.sampleRate / 2.0 : nil

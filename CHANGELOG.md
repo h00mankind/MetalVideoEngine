@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`mve inspect <spec.json> [--json]`.** Pre-flight check of a JobSpec that
+  decodes no frame and creates no Metal texture. It reports unreadable media
+  paths, text fonts that CoreText replaces, text and image overlays that
+  are larger than the canvas, unknown `ease` and transition names, empty
+  windows, and windows or keyframes past the end of the output timeline. Exit 0 with no
+  error, 3 with one or more errors, 2 for a usage error. The Node bridge adds
+  `inspectJob(spec, { signal })`. The inspector reports only what the render
+  reads: the music path only when `musicVolume` is above 0, transitions only
+  on segments before the last, and the ease of a transition only when its
+  type is not `cut`. `mve job` and the inspector now share the playlist
+  builder, audio mix, and overlay rect code in `JobHelpers`, and
+  `warnUnknownKeyframeEases` shares `JobSpec.keyframeLists`; render output
+  is unchanged.
 - **`cubicBezier(x1,y1,x2,y2)` easing.** Keyframe and transition `ease`
   accept a CSS-style cubic bezier next to the five named curves. `x1`/`x2`
   clamp to 0..1; `y1`/`y2` may overshoot. An unknown `ease` string now logs
@@ -45,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `JobSpec.input` is now optional; exactly one of `input` / `inputs` is
   required. `[meta] sourceSecs` reports the playlist's total output
   duration (single-input jobs unchanged).
+
+### Fixed
+- The Node bridge's `runMetalRender` no longer corrupts a multi-byte
+  character that a stderr chunk boundary splits in `onLog` lines.
 
 ## [0.1.4] — 2026-06-12
 

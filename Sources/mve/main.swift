@@ -11,12 +11,15 @@ func logLine(_ s: String) {
 
 func usage() -> Never {
     let msg = """
-    mve — Metal-accelerated render engine (base pass only)
+    mve — Metal-accelerated render engine
 
     USAGE:
       mve render --in <src> --out <dst> [options]
       mve job <spec.json>
       mve frame <spec.json>     (spec.frame.{atSeconds, outPath} required)
+      mve inspect <spec.json> [--json]
+                                pre-flight check of a spec; decodes no frame.
+                                Exit 0 = no error, 3 = one or more errors.
       mve libass --ass <path> --time-ms <int> --out <png> [--w 1080 --h 1920]
       mve text --text <str> --out <png> [text options]
 
@@ -49,12 +52,8 @@ func usage() -> Never {
       mve job /path/to/spec.json
       See Sources/MetalVideoEngine/Job.swift for the schema.
 
-    NOTE: this engine renders the BASE video only (decode + scale +
-    grade + bypass + audio mix). Captions, logo, and text branding are
-    layered on by a downstream ffmpeg pass that consumes this engine's
-    output. The production pipeline writes ProRes 422 HQ to
-    intermediate.mov, then the Node bridge runs `ass=` + `overlay=`
-    against it to produce the final mp4.
+    NOTE: the engine renders the whole output itself: decode, grade,
+    bypass, captions (libass), image and text overlays, and audio mix.
     """
     FileHandle.standardError.write(Data((msg + "\n").utf8))
     exit(2)
@@ -85,6 +84,7 @@ switch argv[1] {
 case "render": runOneShot(argv: argv)
 case "job":    runJob(argv: argv)
 case "frame":  runFrame(argv: argv)
+case "inspect": runInspect(argv: argv)
 case "libass": runLibassProbe(argv: argv)
 case "text":   runTextProbe(argv: argv)
 default:       usage()
@@ -185,6 +185,43 @@ func runFrame(argv: [String]) {
     }
 }
 
+/// Pre-flight check. Prints one line per diagnostic, errors first, or one
+/// JSON array with --json. Exit 3 when any diagnostic is an error.
+func runInspect(argv: [String]) {
+    let flags = argv.dropFirst(2)
+    if let unknown = flags.first(where: { $0.hasPrefix("--") && $0 != "--json" }) {
+        logLine("inspect: unknown option \(unknown)")
+        exit(2)
+    }
+    guard let specPath = flags.first(where: { !$0.hasPrefix("--") }) else { usage() }
+    let asJSON = flags.contains("--json")
+    let spec: JobSpec
+    do { spec = try JSONDecoder().decode(JobSpec.self, from: Data(contentsOf: URL(fileURLWithPath: specPath))) }
+    catch {
+        logLine("inspect: cannot read spec \(specPath): \(error)")
+        exit(2)
+    }
+
+    let diagnostics = Inspector.inspect(spec)
+    let errors = diagnostics.filter { $0.severity == .error }.count
+    if asJSON {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        do { FileHandle.standardOutput.write(try encoder.encode(diagnostics)) }
+        catch {
+            logLine("inspect: cannot encode diagnostics: \(error)")
+            exit(1)
+        }
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    } else {
+        for d in diagnostics {
+            print("\(d.severity.rawValue) \(d.kind.rawValue) \(d.subject): \(d.message)")
+        }
+        logLine("inspect: \(errors) error(s), \(diagnostics.count - errors) warning(s)")
+    }
+    exit(errors > 0 ? 3 : 0)
+}
+
 func executeJob(_ spec: JobSpec) throws {
     let engine = try RenderEngine()
     let req = try buildRenderRequest(spec, engine: engine)
@@ -226,19 +263,10 @@ func parseEase(_ raw: String?) -> Easing {
 
 /// Warn once per unknown keyframe ease in the spec. `Track.from` lives in
 /// the library, which has no logger, so the names are checked here before
-/// the tracks are built. Mirror finds every track list, including ones
-/// added later.
+/// the tracks are built.
 func warnUnknownKeyframeEases(_ spec: JobSpec) {
-    func keyframeLists(_ container: Any?) -> [[JobSpec.KeyframeSpec]] {
-        guard let container else { return [] }
-        return Mirror(reflecting: container).children
-            .compactMap { $0.value as? [JobSpec.KeyframeSpec] }
-    }
-    var lists = (spec.overlays ?? []).flatMap { keyframeLists($0.animate) }
-    lists += (spec.texts ?? []).flatMap { keyframeLists($0.animate) }
-    lists += keyframeLists(spec.animate?.grade) + keyframeLists(spec.animate?.bypass)
     var seen = Set<String>()
-    for key in lists.joined() {
+    for key in spec.keyframeLists.flatMap(\.keys) {
         if let raw = key.ease, seen.insert(raw).inserted { _ = parseEase(raw) }
     }
 }
@@ -257,28 +285,9 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
     // Input: single path or playlist. `inputs` wins when both are set;
     // an unknown transition type degrades to a hard cut (logged) rather
     // than failing the job.
-    var segments: [RenderEngine.Segment]? = nil
+    let segments = JobHelpers.segments(of: spec) { logLine("[job] warning: \($0)") }
     var primaryInput: String
     if let ins = spec.inputs, !ins.isEmpty {
-        segments = ins.map { s in
-            var transition: RenderEngine.Transition? = nil
-            if let t = s.transition {
-                if let kind = RenderEngine.Transition.kind(from: t.type) {
-                    if case .cut = kind {} else {
-                        transition = RenderEngine.Transition(
-                            kind: kind,
-                            duration: t.duration ?? 0.5,
-                            ease: parseEase(t.ease)
-                        )
-                    }
-                } else {
-                    logLine("[job] warning: unknown transition type '\(t.type)' — using cut")
-                }
-            }
-            return RenderEngine.Segment(
-                url: URL(fileURLWithPath: s.path), transition: transition
-            )
-        }
         primaryInput = ins[0].path
     } else if let single = spec.input {
         primaryInput = single
@@ -346,16 +355,8 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
     if let images = spec.overlays {
         for o in images {
             let tex = try Overlay.loadImage(path: o.imagePath, device: device)
-            // Logo width is a fraction of the canvas width; height
-            // follows the source aspect so we don't squish it.
-            let widthFrac = o.widthFraction ?? 0.12
-            let imgW = Float(w) * widthFrac
-            let aspect = Float(tex.height) / Float(tex.width)
-            let size = SIMD2<Float>(imgW, imgW * aspect)
-            let origin = Overlay.anchorRect(
-                size: size, canvas: canvas,
-                position: o.anchor ?? 3,  // default bottom-right
-                offset: SIMD2(o.offsetX ?? 0, o.offsetY ?? 0)
+            let (origin, size) = JobHelpers.imageRect(
+                o, pixelWidth: tex.width, pixelHeight: tex.height, canvas: canvas
             )
             let anim = o.animate
             overlays.append(.init(
@@ -381,30 +382,10 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
             if let fp = t.fontPath, !fp.isEmpty {
                 _ = Fonts.register(path: fp)
             }
-            let color = JobHelpers.hexColor(t.colorHex) ?? SIMD4(1, 1, 1, 1)
-            let bg: Overlay.TextStyle.Background? = {
-                guard let cHex = t.bgColorHex, let opa = t.bgOpacity, opa > 0,
-                      let c = JobHelpers.hexColor(cHex) else { return nil }
-                return Overlay.TextStyle.Background(
-                    color: SIMD4(c.x, c.y, c.z, opa),
-                    cornerRadius: CGFloat(t.bgRadius ?? 8)
-                )
-            }()
-            let style = Overlay.TextStyle(
-                fontName: t.fontName ?? "Helvetica",
-                fontSize: CGFloat(t.fontSize ?? 56),
-                color: color,
-                bold: true,
-                shadow: t.shadow ?? true,
-                background: bg
-            )
+            let style = JobHelpers.textStyle(t)
             let tex = try Overlay.rasterizeText(t.text, style: style, device: device)
             let size = SIMD2<Float>(Float(tex.width), Float(tex.height))
-            let origin = Overlay.anchorRect(
-                size: size, canvas: canvas,
-                position: t.anchor ?? 9,  // default top-right
-                offset: SIMD2(t.offsetX ?? 0, t.offsetY ?? 0)
-            )
+            let origin = JobHelpers.textOrigin(t, size: size, canvas: canvas)
             let anim = t.animate
             overlays.append(.init(
                 texture: tex, rectOrigin: origin, rectSize: size,
@@ -420,12 +401,7 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
     // Audio mix (optional).
     var audio: AudioMix.Spec? = nil
     if let a = spec.audio {
-        audio = AudioMix.Spec(
-            narrationURL: URL(fileURLWithPath: a.narrationPath),
-            musicURL: a.musicPath.map { URL(fileURLWithPath: $0) },
-            musicVolume: a.musicVolume ?? 0.25,
-            bitrate: a.bitrate ?? 192_000
-        )
+        audio = JobHelpers.audioSpec(a)
     }
 
     // Job-level animation: grade/bypass keyframe tracks + whole-frame

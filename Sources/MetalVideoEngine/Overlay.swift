@@ -94,6 +94,16 @@ public enum Overlay {
         return SIMD2<Float>(x.rounded(), y.rounded())
     }
 
+    /// Dst-pixel size of an image overlay: width is a fraction of the
+    /// canvas width; height follows the source aspect so it isn't squished.
+    public static func imageSize(
+        pixelWidth: Int, pixelHeight: Int,
+        widthFraction: Float, canvasWidth: Float
+    ) -> SIMD2<Float> {
+        let w = canvasWidth * widthFraction
+        return SIMD2(w, w * (Float(pixelHeight) / Float(pixelWidth)))
+    }
+
     // ── Image loading ──────────────────────────────────────────────────
 
     /// Load a PNG/JPG from disk into a bgra8Unorm MTLTexture sized at
@@ -227,26 +237,37 @@ public enum Overlay {
         }
     }
 
-    /// Rasterize a single line of text into a transparent BGRA MTLTexture
-    /// sized to glyph bounds + padding for shadow / pill margins. The
-    /// engine composites the returned texture at a destination rect the
-    /// host computes via `anchorRect(...)`.
-    public static func rasterizeText(
-        _ text: String,
-        style: TextStyle,
-        device: MTLDevice
-    ) throws -> MTLTexture {
-        // Resolve the font with bold trait. CoreText needs an explicit
-        // trait apply when the family alone doesn't carry a bold member.
-        let baseDesc = CTFontDescriptorCreateWithNameAndSize(style.fontName as CFString, style.fontSize)
+    /// Resolve a CoreText font by name. Bold needs an explicit trait
+    /// apply when the family alone doesn't carry a bold member.
+    static func resolveFont(name: String, size: CGFloat, bold: Bool) -> CTFont {
+        let baseDesc = CTFontDescriptorCreateWithNameAndSize(name as CFString, size)
         let desc: CTFontDescriptor
-        if style.bold,
+        if bold,
            let withTraits = CTFontDescriptorCreateCopyWithSymbolicTraits(baseDesc, .boldTrait, .boldTrait) {
             desc = withTraits
         } else {
             desc = baseDesc
         }
-        let font = CTFontCreateWithFontDescriptor(desc, style.fontSize, nil)
+        return CTFontCreateWithFontDescriptor(desc, size, nil)
+    }
+
+    /// Glyph run plus the pixel size of the raster `rasterizeText` makes
+    /// for it. Pure CoreText, no GPU, so the pre-flight check measures
+    /// text with the exact numbers the engine uses.
+    struct TextLayout {
+        var font: CTFont
+        var line: CTLine
+        var textW: CGFloat
+        var textH: CGFloat
+        var descent: CGFloat
+        var shadowPad: CGFloat
+        var bgPad: CGFloat
+        var width: Int
+        var height: Int
+    }
+
+    static func layoutText(_ text: String, style: TextStyle) -> TextLayout {
+        let font = resolveFont(name: style.fontName, size: style.fontSize, bold: style.bold)
 
         // Build the attributed string. Foreground colour + font are the
         // only attributes — single line, no paragraph styling.
@@ -274,8 +295,28 @@ public enum Overlay {
         let shadowPad: CGFloat = style.shadow ? 4 : 0
         let bgPad: CGFloat = style.background != nil ? 12 : 0
         let totalPad = shadowPad + bgPad
-        let w = Int(textW + 2 * totalPad)
-        let h = Int(textH + 2 * totalPad)
+        return TextLayout(
+            font: font, line: line, textW: textW, textH: textH, descent: descent,
+            shadowPad: shadowPad, bgPad: bgPad,
+            width: Int(textW + 2 * totalPad), height: Int(textH + 2 * totalPad)
+        )
+    }
+
+    /// Rasterize a single line of text into a transparent BGRA MTLTexture
+    /// sized to glyph bounds + padding for shadow / pill margins. The
+    /// engine composites the returned texture at a destination rect the
+    /// host computes via `anchorRect(...)`.
+    public static func rasterizeText(
+        _ text: String,
+        style: TextStyle,
+        device: MTLDevice
+    ) throws -> MTLTexture {
+        let layout = layoutText(text, style: style)
+        let (textW, textH, descent) = (layout.textW, layout.textH, layout.descent)
+        let (shadowPad, bgPad) = (layout.shadowPad, layout.bgPad)
+        let totalPad = shadowPad + bgPad
+        let (w, h) = (layout.width, layout.height)
+        let line = layout.line
 
         let bytesPerRow = w * 4
         var pixels = [UInt8](repeating: 0, count: h * bytesPerRow)

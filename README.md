@@ -215,6 +215,40 @@ The CLI logs progress to stderr in a stable format:
 [done] frames=4080  src=136.49s  wall=20.81s  speed=6.53x
 ```
 
+### CLI: pre-flight check
+
+```sh
+mve inspect /abs/path/to/spec.json          # one line per finding
+mve inspect /abs/path/to/spec.json --json   # one JSON array on stdout
+```
+
+`inspect` checks a spec before you render it. It decodes no video frame
+and creates no Metal texture. Each finding prints as
+`<severity> <kind> <subject>: <message>`, errors first, with a summary
+line on stderr. `--json` prints only the array of
+`{kind, severity, subject, message, atSeconds?}` objects (`[]` when clean).
+`inspectJob(spec, { signal })` in the Node bridge runs the same check. Aborting `signal` kills the child.
+
+| Kind | Severity | Meaning |
+| --- | --- | --- |
+| `missingMedia` | error | A path the render reads is unreadable: `input`, `inputs[].path`, `overlays[].imagePath`, `lutPath`, `subtitles.assPath`, `subtitles.fontsDir`, `texts[].fontPath`, `audio.narrationPath`, and `audio.musicPath` when the render opens it (`musicVolume` is not 0). A file path must be a readable regular file, and `subtitles.fontsDir` must be a directory. Also: no `input` or `inputs`, an image that ImageIO cannot open, an input with no video track. |
+| `fontFallback` | warning | CoreText resolves a text `fontName` to a different font. Fonts from `subtitles.fontsDir` and `fontPath` count as installed. |
+| `textClipped` | warning | The rest rect of a text or image overlay is larger than the canvas and crosses an edge. The rest rect uses the anchor, offsets, and size with no animation. The engine clamps the origin into the canvas, so an offset alone never causes this. |
+| `unknownEase` | error | An `ease` string that the engine does not parse, on a keyframe (one finding per track) or on a transition that the render reads. |
+| `unknownTransition` | error | A transition `type` that is not in the gallery. The engine reads the transition of segment `i` for the boundary into `i + 1` and ignores the last one, so `inspect` does too. A `cut` never reads its `ease`. |
+| `emptyWindow` | error | `endSeconds` is not after `startSeconds`. A missing `startSeconds` counts as 0. |
+| `windowOutsideTimeline` | warning | A window starts at or after the end of the output timeline. |
+| `keyframeOutsideTimeline` | warning | A track has a keyframe after the end of the output timeline (one finding per track). |
+
+The two timeline checks read the input durations with AVFoundation. They
+count the overlap of crossfade, wipe, and slide transitions, and they are
+skipped when an input is unreadable.
+
+Exit codes: `0` when no error is found (warnings alone exit 0), `3` when
+one or more errors are found, `2` for a usage error (including an unknown
+`--` option) or a spec file that cannot be read or decoded, `1` when the
+`--json` output cannot be encoded.
+
 ### Node bridge
 
 `bridge/mve.mjs` spawns the CLI and parses the progress/done lines into a
@@ -274,6 +308,7 @@ needed. That mode is useful as a local smoke test. The default fixture is
   - `Animation.swift`                 — keyframe tracks + easing evaluator
   - `LUT.swift`, `Overlay.swift`,
     `Fonts.swift`, `Job.swift`        — feature modules
+  - `Inspect.swift`                   — `mve inspect` pre-flight check
   - `Encoder.swift`, `AudioMix.swift` — VT encode + audio mux
 - `Sources/mve/main.swift`            — CLI entry point
 - `Sources/CLibass/`                  — libass module shim

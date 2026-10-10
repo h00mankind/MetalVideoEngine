@@ -150,3 +150,36 @@ export function runMetalRender(
   spec: MetalJobSpec,
   events?: MetalRunEvents,
 ): Promise<MetalRunStats>;
+
+export type MetalDiagnosticKind =
+  | 'missingMedia'
+  | 'fontFallback'
+  | 'textClipped'
+  | 'unknownEase'
+  | 'unknownTransition'
+  | 'windowOutsideTimeline'
+  | 'keyframeOutsideTimeline'
+  | 'emptyWindow';
+
+/** One finding of `mve inspect`. */
+export type MetalDiagnostic = {
+  kind: MetalDiagnosticKind;
+  /** `error` makes `mve inspect` exit 3; `warning` does not. */
+  severity: 'error' | 'warning';
+  /** The spec field the finding concerns, for example `texts[0].fontName`. */
+  subject: string;
+  message: string;
+  /** Output-timeline seconds, when the finding points at one. */
+  atSeconds?: number;
+};
+
+/**
+ * Pre-flight check of a job spec (`mve inspect --json`). Resolves to the
+ * diagnostics, errors first, for exit codes 0 and 3. Rejects for any other
+ * exit code. Decodes no video frame. Aborting `signal` kills the child, and
+ * the promise rejects.
+ */
+export function inspectJob(
+  spec: MetalJobSpec,
+  options?: { signal?: AbortSignal },
+): Promise<MetalDiagnostic[]>;
