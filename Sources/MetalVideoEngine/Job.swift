@@ -109,7 +109,7 @@ public struct JobSpec: Codable {
     /// 0.5s and is clamped to the shorter neighbouring segment.
     /// Overlapping types (crossfade/wipe/slide) shorten the output by
     /// their duration; cut and dipToBlack don't. `ease` shapes the
-    /// progress curve (same names as keyframe easing, default linear).
+    /// progress curve (same values as keyframe `ease`, default linear).
     public struct TransitionSpec: Codable {
         public var type: String
         public var duration: Double?
@@ -118,9 +118,12 @@ public struct JobSpec: Codable {
 
     /// One point on a keyframe track: value `v` at output-timeline
     /// second `t`, interpolated from the previous key with `ease`
-    /// ("hold" | "linear" | "easeIn" | "easeOut" | "easeInOut",
-    /// default linear). The engine has no animation presets — the host
-    /// compiles its named animations down to these lists.
+    /// ("hold" | "linear" | "easeIn" | "easeOut" | "easeInOut", or
+    /// "cubicBezier(x1,y1,x2,y2)" like CSS cubic-bezier; x1/x2 are
+    /// clamped to 0...1, y1/y2 may overshoot; default linear). An
+    /// unknown string logs a warning and falls back to linear. The
+    /// engine has no animation presets — the host compiles its named
+    /// animations down to these lists.
     public struct KeyframeSpec: Codable {
         public var t: Double
         public var v: Float

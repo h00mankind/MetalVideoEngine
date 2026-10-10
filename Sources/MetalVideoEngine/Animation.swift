@@ -17,12 +17,39 @@ import Foundation
 /// them into keyframes.
 
 /// Interpolation shape *into* a keyframe from the previous one.
-public enum Easing: String {
+public enum Easing: Equatable {
     case hold        // step: previous value until this key's time
     case linear
     case easeIn      // cubic
     case easeOut
     case easeInOut
+    /// CSS `cubic-bezier(x1, y1, x2, y2)`. x1/x2 are clamped to 0...1 so
+    /// time stays monotonic; y1/y2 are free, so a curve can overshoot.
+    case cubicBezier(Float, Float, Float, Float)
+
+    /// Parse a JobSpec ease string: a case name or
+    /// `cubicBezier(x1,y1,x2,y2)`. Any other string returns nil.
+    public static func parse(_ raw: String) -> Easing? {
+        switch raw {
+        case "hold":      return .hold
+        case "linear":    return .linear
+        case "easeIn":    return .easeIn
+        case "easeOut":   return .easeOut
+        case "easeInOut": return .easeInOut
+        default:
+            let prefix = "cubicBezier("
+            guard raw.hasPrefix(prefix), raw.hasSuffix(")") else { return nil }
+            let args = raw.dropFirst(prefix.count).dropLast()
+                .split(separator: ",", omittingEmptySubsequences: false)
+                .map { Float($0.trimmingCharacters(in: .whitespaces)) }
+            guard args.count == 4,
+                  let x1 = args[0], let y1 = args[1],
+                  let x2 = args[2], let y2 = args[3],
+                  [x1, y1, x2, y2].allSatisfy(\.isFinite)
+            else { return nil }
+            return .cubicBezier(x1, y1, x2, y2)
+        }
+    }
 
     /// Map linear progress u ∈ [0,1] to eased progress.
     func apply(_ u: Float) -> Float {
@@ -35,7 +62,51 @@ public enum Easing: String {
             return u < 0.5
                 ? 4 * u * u * u
                 : 1 - pow(-2 * u + 2, 3) / 2
+        case .cubicBezier(let x1, let y1, let x2, let y2):
+            if u <= 0 { return 0 }
+            if u >= 1 { return 1 }
+            return Float(Self.solveBezier(
+                Double(u),
+                Double(min(max(x1, 0), 1)), Double(y1),
+                Double(min(max(x2, 0), 1)), Double(y2)))
         }
+    }
+
+    /// y at the point where the bezier's x equals `x` (WebKit UnitBezier:
+    /// Newton steps, bisection when Newton stalls).
+    private static func solveBezier(
+        _ x: Double, _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double
+    ) -> Double {
+        let cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx
+        let cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by
+        func sampleX(_ t: Double) -> Double { ((ax * t + bx) * t + cx) * t }
+        func sampleY(_ t: Double) -> Double { ((ay * t + by) * t + cy) * t }
+        func slopeX(_ t: Double) -> Double { (3 * ax * t + 2 * bx) * t + cx }
+
+        // Tight on purpose: where the x curve is flat (x1 or x2 at 0 or 1)
+        // a small x error is a large y error.
+        let epsilon = 1e-12
+        var t = x
+        for _ in 0..<8 {
+            let err = sampleX(t) - x
+            if abs(err) < epsilon { return sampleY(t) }
+            let d = slopeX(t)
+            if abs(d) < 1e-6 { break }
+            t -= err / d
+            if t < 0 || t > 1 { break }
+        }
+
+        var lo = 0.0, hi = 1.0
+        t = x
+        while lo < hi {
+            let err = sampleX(t) - x
+            if abs(err) < epsilon { break }
+            if err > 0 { hi = t } else { lo = t }
+            let mid = (hi - lo) / 2 + lo
+            if mid == t { break }
+            t = mid
+        }
+        return sampleY(t)
     }
 }
 
@@ -97,7 +168,7 @@ extension Track {
         guard let specs, !specs.isEmpty else { return nil }
         return Track(specs.map {
             Keyframe(t: $0.t, v: map($0.v),
-                     ease: Easing(rawValue: $0.ease ?? "linear") ?? .linear)
+                     ease: $0.ease.flatMap(Easing.parse) ?? .linear)
         })
     }
 }

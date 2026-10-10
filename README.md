@@ -158,7 +158,11 @@ schema. A minimal job:
 
 Animation is keyframes-first: every animatable value takes a raw
 `(t, v, ease)` list (`ease`: `hold` | `linear` | `easeIn` | `easeOut` |
-`easeInOut`, evaluated at output-timeline seconds). Playlists replace
+`easeInOut` | `cubicBezier(x1,y1,x2,y2)`, evaluated at output-timeline
+seconds). `cubicBezier` matches CSS `cubic-bezier`: `x1`/`x2` clamp to
+0..1, `y1`/`y2` may overshoot. An unknown `ease` string logs
+`[job] warning` and renders as `linear`. Transition `ease` takes the
+same values. Playlists replace
 `input` with `inputs`; a transition on a segment describes the boundary
 into the next one:
 

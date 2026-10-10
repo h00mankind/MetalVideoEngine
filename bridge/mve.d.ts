@@ -43,6 +43,28 @@ export type MetalSubtitles = {
   marginV?: number;
 };
 
+/**
+ * Keyframe/transition easing. `cubicBezier(x1,y1,x2,y2)` matches CSS
+ * `cubic-bezier`: x1/x2 clamp to 0..1, y1/y2 may overshoot. An unknown
+ * string logs `[job] warning` and renders as linear.
+ */
+export type MetalEasing =
+  | 'hold'
+  | 'linear'
+  | 'easeIn'
+  | 'easeOut'
+  | 'easeInOut'
+  | `cubicBezier(${number},${number},${number},${number})`;
+
+/** One point of a keyframe track; `ease` shapes the step into this key. */
+export type MetalKeyframe = {
+  /** Output-timeline seconds. */
+  t: number;
+  v: number;
+  /** Default linear. */
+  ease?: MetalEasing;
+};
+
 export type MetalOverlay = {
   imagePath: string;
   /** 1..9 numpad anchor. */

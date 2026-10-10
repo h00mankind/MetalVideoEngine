@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`cubicBezier(x1,y1,x2,y2)` easing.** Keyframe and transition `ease`
+  accept a CSS-style cubic bezier next to the five named curves. `x1`/`x2`
+  clamp to 0..1; `y1`/`y2` may overshoot. An unknown `ease` string now logs
+  `[job] warning` and falls back to linear; named easings render
+  bit-identically.
 - **Keyframe animation.** Overlays and texts accept visibility windows
   (`startSeconds`/`endSeconds`) and raw keyframe tracks (`animate` block:
   `opacity`, `offsetX`, `offsetY`, `scale`) with hold/linear/easeIn/easeOut/
