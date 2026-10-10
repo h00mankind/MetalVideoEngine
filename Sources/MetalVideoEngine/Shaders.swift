@@ -337,8 +337,11 @@ public enum Shaders {
                     : (d.y > 0.5)  ? uv.y
                     :                1.0 - uv.y;
             bCol = b.sample(bilinear, uv);
-            m = 1.0 - smoothstep(params.progress - params.softness,
-                                 params.progress + params.softness, s);
+            // The lip's centre travels from -softness to 1+softness so
+            // progress 0 is pure A and progress 1 is pure B.
+            float edge = mix(-params.softness, 1.0 + params.softness, params.progress);
+            m = 1.0 - smoothstep(edge - params.softness,
+                                 edge + params.softness, s);
         } else {                                       // slide (push-over)
             // B's texture translates in: at progress p its content is
             // shifted (1-p) toward the entry edge; outside [0,1] shows A.

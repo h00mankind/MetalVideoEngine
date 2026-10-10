@@ -328,6 +328,10 @@ public final class RenderEngine {
     /// and the total output duration. Shared by `render` and
     /// `renderFrame` so the full render and the probe agree on where
     /// every output second lands.
+    /// Slack for PTS comparisons. `k/30 - 1.5` and `(k-45)/30` differ in
+    /// the last float bits; far below any real frame interval.
+    static let ptsEpsilon = 1e-4
+
     struct Timeline {
         var segments: [Segment]
         var segSecs: [Double]
@@ -351,17 +355,22 @@ public final class RenderEngine {
             // Clamp transition durations so a window can never outlast
             // either neighbouring segment. An overlapping transition
             // shortens the output: both segments play simultaneously
-            // for its duration.
+            // for its duration. A segment's incoming overlap also eats
+            // into what its outgoing transition may use — two windows
+            // must never claim the same frames of the middle segment.
             var transitions: [Transition?] = Array(repeating: nil, count: segments.count)
             var offsets: [Double] = Array(repeating: 0, count: segments.count)
+            var overlapIn = 0.0
             for i in 0..<(segments.count - 1) {
                 var overlap = 0.0
                 if var tr = segments[i].transition {
-                    tr.duration = max(0, min(tr.duration, min(segSecs[i], segSecs[i + 1])))
+                    let available = tr.overlaps ? segSecs[i] - overlapIn : segSecs[i]
+                    tr.duration = max(0, min(tr.duration, min(available, segSecs[i + 1])))
                     transitions[i] = tr
                     if tr.overlaps { overlap = tr.duration }
                 }
                 offsets[i + 1] = offsets[i] + segSecs[i] - overlap
+                overlapIn = overlap
             }
             return Timeline(
                 segments: segments,
@@ -497,6 +506,7 @@ public final class RenderEngine {
         var bNext: VideoDecoder.Frame?         // one-frame lookahead past blend time
         var pushback: VideoDecoder.Frame?      // lookahead handed to the next segment's loop
         var transTemp: MTLTexture?
+        var lastOutSec = -Double.infinity
 
         for segIdx in segments.indices {
             if let e = currentError() { throw e }
@@ -534,6 +544,12 @@ public final class RenderEngine {
                 } else {
                     break
                 }
+                // The frame B showed last inside the overlap must not be
+                // emitted again: a repeated output PTS fails the writer.
+                if segIdx > 0,
+                   segOffset + CMTimeGetSeconds(frame.presentationTime) <= lastOutSec + Self.ptsEpsilon {
+                    continue
+                }
 
                 guard let yTex = ctx.texture(from: frame.pixelBuffer, plane: 0, pixelFormat: .r8Unorm),
                       let cbcrTex = ctx.texture(from: frame.pixelBuffer, plane: 1, pixelFormat: .rg8Unorm) else {
@@ -559,6 +575,7 @@ public final class RenderEngine {
                 // the OUTPUT time; transitions run on segment-local time.
                 let localSec = CMTimeGetSeconds(frame.presentationTime)
                 let tSec = segOffset + localSec
+                lastOutSec = tSec
 
                 // Pass 1 — scale+grade+bypass into the encoder's
                 // destination texture. Keyed grade/bypass fields override
@@ -591,7 +608,7 @@ public final class RenderEngine {
                     while true {
                         if bNext == nil { bNext = pendingDecoder?.nextFrame() }
                         guard let n = bNext else { break }
-                        if CMTimeGetSeconds(n.presentationTime) <= bTime {
+                        if CMTimeGetSeconds(n.presentationTime) <= bTime + Self.ptsEpsilon {
                             bCurrent = n
                             bNext = nil
                         } else {
