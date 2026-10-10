@@ -234,6 +234,27 @@ public struct JobSpec: Codable {
     }
 }
 
+extension JobSpec {
+    /// Every keyframe list in the spec with its field path, for example
+    /// `texts[0].animate.opacity`. Mirror finds each track list, including
+    /// ones added to the animate structs later, so this is the one place
+    /// that knows which fields animate.
+    public var keyframeLists: [(path: String, keys: [KeyframeSpec])] {
+        func lists(_ container: Any?, _ prefix: String) -> [(path: String, keys: [KeyframeSpec])] {
+            guard let container else { return [] }
+            return Mirror(reflecting: container).children.compactMap { child in
+                guard let label = child.label, let keys = child.value as? [KeyframeSpec] else { return nil }
+                return ("\(prefix).\(label)", keys)
+            }
+        }
+        var all: [(path: String, keys: [KeyframeSpec])] = []
+        for (i, o) in (overlays ?? []).enumerated() { all += lists(o.animate, "overlays[\(i)].animate") }
+        for (i, t) in (texts ?? []).enumerated() { all += lists(t.animate, "texts[\(i)].animate") }
+        all += lists(animate?.grade, "animate.grade") + lists(animate?.bypass, "animate.bypass")
+        return all
+    }
+}
+
 /// Decode helpers — small enough to keep here rather than spinning up a
 /// separate module. Hex colour parsing is the only non-trivial bit.
 public enum JobHelpers {
@@ -256,6 +277,93 @@ public enum JobHelpers {
             let a = Float( rgba        & 0xFF) / 255
             return SIMD4(r, g, b, a)
         }
+    }
+
+    /// The CoreText style `mve job` rasterizes a text overlay with.
+    public static func textStyle(_ t: JobSpec.TextSpec) -> Overlay.TextStyle {
+        let color = hexColor(t.colorHex) ?? SIMD4(1, 1, 1, 1)
+        let bg: Overlay.TextStyle.Background? = {
+            guard let cHex = t.bgColorHex, let opa = t.bgOpacity, opa > 0,
+                  let c = hexColor(cHex) else { return nil }
+            return Overlay.TextStyle.Background(
+                color: SIMD4(c.x, c.y, c.z, opa),
+                cornerRadius: CGFloat(t.bgRadius ?? 8)
+            )
+        }()
+        return Overlay.TextStyle(
+            fontName: t.fontName ?? "Helvetica",
+            fontSize: CGFloat(t.fontSize ?? 56),
+            color: color,
+            bold: true,
+            shadow: t.shadow ?? true,
+            background: bg
+        )
+    }
+
+    /// The playlist `spec.inputs` describes, or nil for the single-`input`
+    /// form. An unknown transition type is a hard cut and an unknown ease
+    /// is linear; `warn` hears each one. `cut` never reads its ease.
+    public static func segments(
+        of spec: JobSpec, warn: (String) -> Void = { _ in }
+    ) -> [RenderEngine.Segment]? {
+        guard let ins = spec.inputs, !ins.isEmpty else { return nil }
+        return ins.map { s in
+            var transition: RenderEngine.Transition? = nil
+            if let t = s.transition {
+                if let kind = RenderEngine.Transition.kind(from: t.type) {
+                    if case .cut = kind {} else {
+                        var ease = Easing.linear
+                        if let raw = t.ease {
+                            if let parsed = Easing.parse(raw) { ease = parsed }
+                            else { warn("unknown ease '\(raw)' — using linear") }
+                        }
+                        transition = RenderEngine.Transition(
+                            kind: kind, duration: t.duration ?? 0.5, ease: ease
+                        )
+                    }
+                } else {
+                    warn("unknown transition type '\(t.type)' — using cut")
+                }
+            }
+            return RenderEngine.Segment(url: URL(fileURLWithPath: s.path), transition: transition)
+        }
+    }
+
+    /// The audio mix `mve job` builds from `spec.audio`.
+    public static func audioSpec(_ a: JobSpec.AudioSpec) -> AudioMix.Spec {
+        AudioMix.Spec(
+            narrationURL: URL(fileURLWithPath: a.narrationPath),
+            musicURL: a.musicPath.map { URL(fileURLWithPath: $0) },
+            musicVolume: a.musicVolume ?? 0.25,
+            bitrate: a.bitrate ?? 192_000
+        )
+    }
+
+    /// Rest rect of an image overlay on the canvas.
+    public static func imageRect(
+        _ o: JobSpec.OverlaySpec, pixelWidth: Int, pixelHeight: Int, canvas: SIMD2<Float>
+    ) -> (origin: SIMD2<Float>, size: SIMD2<Float>) {
+        let size = Overlay.imageSize(
+            pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+            widthFraction: o.widthFraction ?? 0.12, canvasWidth: canvas.x
+        )
+        let origin = Overlay.anchorRect(
+            size: size, canvas: canvas,
+            position: o.anchor ?? 3,  // default bottom-right
+            offset: SIMD2(o.offsetX ?? 0, o.offsetY ?? 0)
+        )
+        return (origin, size)
+    }
+
+    /// Rest origin of a text overlay whose raster measures `size`.
+    public static func textOrigin(
+        _ t: JobSpec.TextSpec, size: SIMD2<Float>, canvas: SIMD2<Float>
+    ) -> SIMD2<Float> {
+        Overlay.anchorRect(
+            size: size, canvas: canvas,
+            position: t.anchor ?? 9,  // default top-right
+            offset: SIMD2(t.offsetX ?? 0, t.offsetY ?? 0)
+        )
     }
 
     /// "720p"/"1080p" → (w, h, defaultBitrate). Anything else parsed as

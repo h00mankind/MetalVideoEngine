@@ -86,15 +86,29 @@ const META_RE = /^\[meta\] sourceSecs=([\d.]+)/;
 const FRAME_RE = /^\[engine\] frame (\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed=([\d.]+)x/;
 const DONE_RE = /^\[done\] frames=(\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed=([\d.]+)x/;
 
-export async function runMetalRender(spec, events = {}) {
-  // Write the spec to a temp file. We pass it via filesystem rather than
-  // stdin because the Swift CLI's argv-based interface is simpler than
-  // implementing a stdin protocol on the Swift side, and the spec is
-  // tiny (a few KB at most).
+/**
+ * Write the spec to a temp file, run `fn(specPath)`, and always remove
+ * the temp directory. We pass the spec via filesystem rather than stdin
+ * because the Swift CLI's argv-based interface is simpler than
+ * implementing a stdin protocol on the Swift side, and the spec is tiny
+ * (a few KB at most).
+ */
+async function withTempSpec(spec, fn) {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'mve-'));
-  const specPath = path.join(tmpDir, 'job.json');
-  await writeFile(specPath, JSON.stringify(spec, null, 2), 'utf8');
+  try {
+    const specPath = path.join(tmpDir, 'job.json');
+    await writeFile(specPath, JSON.stringify(spec, null, 2), 'utf8');
+    return await fn(specPath);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
 
+export function runMetalRender(spec, events = {}) {
+  return withTempSpec(spec, (specPath) => runJob(specPath, events));
+}
+
+function runJob(specPath, events) {
   // Source-duration denominator for onProgress. Preferred path: the
   // engine prints `[meta] sourceSecs=N` once, before the first frame.
   // Fallback (older binaries): running-max of seen PTS, which gives a
@@ -110,9 +124,14 @@ export async function runMetalRender(spec, events = {}) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    // A string decoder keeps a multi-byte character that a chunk
+    // boundary splits.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+
     let stderrBuffer = '';
     function ingestStderr(chunk) {
-      stderrBuffer += chunk.toString('utf8');
+      stderrBuffer += chunk;
       const parts = stderrBuffer.split(/\r?\n/);
       stderrBuffer = parts.pop() ?? '';
       for (const line of parts) {
@@ -159,13 +178,9 @@ export async function runMetalRender(spec, events = {}) {
     }
     events.signal?.addEventListener('abort', abort, { once: true });
 
-    child.on('error', (err) => {
-      void rm(tmpDir, { recursive: true, force: true });
-      reject(err);
-    });
+    child.on('error', reject);
     child.on('close', (code, signal) => {
       events.signal?.removeEventListener('abort', abort);
-      void rm(tmpDir, { recursive: true, force: true });
       // v0.1.3 and older can signal SIGTRAP after `[done]` because the
       // engine disposed a drained in-flight semaphore. v0.1.4 fixes the
       // engine, but the bridge keeps this compatibility path for one
@@ -190,4 +205,45 @@ export async function runMetalRender(spec, events = {}) {
       });
     });
   });
+}
+
+/**
+ * Pre-flight check of a job spec: runs `mve inspect --json` and resolves
+ * to the diagnostics array. Exit 0 (no error) and exit 3 (one or more
+ * errors) both resolve; the caller reads `severity`. Any other exit code
+ * rejects. Decodes no video frame. `signal` aborts the check and kills
+ * the child.
+ */
+export function inspectJob(spec, { signal } = {}) {
+  return withTempSpec(spec, (specPath) => new Promise((resolve, reject) => {
+    const child = spawn(binaryPath(), ['inspect', specPath, '--json'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+    function abort() {
+      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+
+    child.on('error', reject);
+    child.on('close', (code, exitSignal) => {
+      signal?.removeEventListener('abort', abort);
+      if (code !== 0 && code !== 3) {
+        reject(new Error(`mve inspect exited with code=${code} signal=${exitSignal ?? 'none'}: ${stderr.trim()}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (err) {
+        reject(new Error(`mve inspect printed invalid JSON: ${err.message}`));
+      }
+    });
+  }));
 }
