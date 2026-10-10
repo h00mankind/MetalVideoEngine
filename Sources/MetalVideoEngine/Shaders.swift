@@ -288,6 +288,70 @@ public enum Shaders {
     }
 
     // ============================================================
+    //  Segment transition blend (playlist A→B)
+    // ============================================================
+    //
+    //  The generic transition mechanism: `dst` already holds segment
+    //  A's fully-processed frame; `b` holds segment B's frame run
+    //  through the same main pass. This kernel mixes B over A by
+    //  `progress` ∈ [0,1]. The transition *types* are a gallery of
+    //  per-pixel mix rules against that one contract — adding a type
+    //  never touches the decode plumbing.
+    //
+    //  kind: 0 = crossfade   mix everywhere by progress
+    //        1 = wipe        feathered edge sweeps along `direction`
+    //        2 = slide       B's frame translates in from the edge
+    //  direction: unit vector B enters FROM, e.g. (1,0) = from the
+    //  left edge moving right. softness: wipe feather half-width as a
+    //  fraction of the swept extent.
+    struct TransitionParams {
+        float2 dstSize;
+        float  progress;
+        uint   kind;
+        float2 direction;
+        float  softness;
+    };
+
+    kernel void transition_blend(
+        texture2d<float, access::sample>     b   [[texture(0)]],
+        texture2d<float, access::read_write> dst [[texture(1)]],
+        constant TransitionParams& params [[buffer(0)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= uint(params.dstSize.x) || gid.y >= uint(params.dstSize.y)) return;
+        float2 uv = (float2(gid) + 0.5) / params.dstSize;
+        constexpr sampler bilinear(coord::normalized, filter::linear,
+                                   address::clamp_to_edge);
+        float4 aCol = dst.read(gid);
+        float4 bCol = float4(0.0);
+        float m = 0.0;
+        if (params.kind == 0u) {                       // crossfade
+            bCol = b.sample(bilinear, uv);
+            m = params.progress;
+        } else if (params.kind == 1u) {                // wipe
+            // Swept coordinate s ∈ [0,1] increasing away from the
+            // entry edge; B occupies s < progress with a feathered lip.
+            float2 d = params.direction;
+            float s = (d.x > 0.5)  ? uv.x
+                    : (d.x < -0.5) ? 1.0 - uv.x
+                    : (d.y > 0.5)  ? uv.y
+                    :                1.0 - uv.y;
+            bCol = b.sample(bilinear, uv);
+            m = 1.0 - smoothstep(params.progress - params.softness,
+                                 params.progress + params.softness, s);
+        } else {                                       // slide (push-over)
+            // B's texture translates in: at progress p its content is
+            // shifted (1-p) toward the entry edge; outside [0,1] shows A.
+            float2 buv = uv + params.direction * (1.0 - params.progress);
+            if (buv.x >= 0.0 && buv.x <= 1.0 && buv.y >= 0.0 && buv.y <= 1.0) {
+                bCol = b.sample(bilinear, buv);
+                m = 1.0;
+            }
+        }
+        dst.write(mix(aCol, bCol, m), gid);
+    }
+
+    // ============================================================
     //  Identity LUT seed
     // ============================================================
     kernel void fill_identity_lut(
@@ -324,6 +388,12 @@ public enum Shaders {
         // across its duration. Backward-compatible: existing call sites
         // pass 1.0 and get identical pixel output.
         float  clipRight;
+        // Normalized source window — the sub-rect of the overlay
+        // texture mapped onto the dest rect. (0,0)/(1,1) = full texture
+        // (pixel-identical to the pre-window kernel). Animated by the
+        // Ken Burns tracks to pan/zoom a photo inside its rect.
+        float2 srcOrigin;
+        float2 srcSize;
     };
 
     kernel void overlay_composite(
@@ -366,7 +436,13 @@ public enum Shaders {
         // anti-aliased edge falls naturally on word/glyph boundaries
         // when callers align word x-positions to the same grid as the
         // base layer rasterizer — see KaraokeTrack.swift.
+        // Clip in rect-local U BEFORE the source-window remap so
+        // karaoke sweeps stay rect-relative.
         if (uv.x > params.clipRight) return;
+        // Source-window remap (Ken Burns). Identity for the default
+        // (0,0)/(1,1) window: uv stays exactly as computed above,
+        // including the texel-centre alignment for 1:1 composites.
+        uv = params.srcOrigin + uv * params.srcSize;
         constexpr sampler bilinear(coord::normalized, filter::linear,
                                    address::clamp_to_edge);
         float4 src = overlay.sample(bilinear, uv);

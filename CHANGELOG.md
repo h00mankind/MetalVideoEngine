@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Keyframe animation.** Overlays and texts accept visibility windows
+  (`startSeconds`/`endSeconds`) and raw keyframe tracks (`animate` block:
+  `opacity`, `offsetX`, `offsetY`, `scale`) with hold/linear/easeIn/easeOut/
+  easeInOut easing. The engine has no animation presets — hosts compile
+  named animations down to `(t, v, ease)` keyframes. Tracks evaluate
+  against output-timeline seconds on the CPU and feed the existing
+  composite path; unanimated jobs render bit-identically to v0.1.4.
+- **Effects-over-time.** Job-level `animate.grade` / `animate.bypass`
+  keyframe tracks over brightness, contrast, saturation, tint, lutMix,
+  zoom, colorTintDeg, noise, grain, and edgeBlur, plus
+  `animate.fadeInSeconds` / `animate.fadeOutSeconds` whole-frame fades
+  (a stretched 1×1 black texture — no new kernel).
+- **Ken Burns.** Image overlays take `srcCenterX`/`srcCenterY`/`srcZoom`
+  tracks; the composite kernel gained a normalized source window
+  (cover semantics, aspect can't skew). Default window is pixel-identical
+  to the previous kernel.
+- **Playlists and transitions.** `inputs: [{path, transition}]` renders
+  multiple clips on one output timeline. Transition gallery: `cut`,
+  `crossfade`, `dipToBlack`, `wipeLeft/Right/Up/Down`,
+  `slideLeft/Right/Up/Down`, each with `duration` and `ease`. Overlapping
+  types run both decoders through the main pass and mix via a new
+  `transition_blend` kernel; grade/bypass/subtitles/overlays/animation all
+  evaluate on the output timeline across boundaries. Narration/music audio
+  is unaffected by video transitions (no source-audio crossfade).
+- `mve frame` composites overlays (it previously skipped them), applies
+  animation state at the probed PTS, and maps output-timeline targets into
+  playlist segments — probes mid-animation match the full render.
+
+### Changed
+- `JobSpec.input` is now optional; exactly one of `input` / `inputs` is
+  required. `[meta] sourceSecs` reports the playlist's total output
+  duration (single-input jobs unchanged).
+
 ## [0.1.4] — 2026-06-12
 
 ### Added

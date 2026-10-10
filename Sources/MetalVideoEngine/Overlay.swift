@@ -165,6 +165,33 @@ public enum Overlay {
         return tex
     }
 
+    /// 1×1 solid-colour texture (premultiplied BGRA). Stretched across
+    /// any rect by the composite's bilinear sampler (one texel = constant
+    /// colour) — the engine's whole-frame fade uses a black one instead
+    /// of a dedicated fill kernel.
+    public static func solidTexture(
+        rgba: SIMD4<Float>, device: MTLDevice
+    ) throws -> MTLTexture {
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: 1, height: 1, mipmapped: false
+        )
+        desc.usage = [.shaderRead]
+        desc.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: desc) else {
+            throw MVEError.pipelineStateFailed("Overlay.solidTexture: makeTexture failed")
+        }
+        let a = max(0, min(1, rgba.w))
+        var px: [UInt8] = [
+            UInt8(max(0, min(1, rgba.z)) * a * 255),  // B (premultiplied)
+            UInt8(max(0, min(1, rgba.y)) * a * 255),  // G
+            UInt8(max(0, min(1, rgba.x)) * a * 255),  // R
+            UInt8(a * 255),                           // A
+        ]
+        tex.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0,
+                    withBytes: &px, bytesPerRow: 4)
+        return tex
+    }
+
     // ── Text rasterization (channel name + extra texts) ───────────────
 
     /// Optional background pill drawn behind the glyphs — opacity-baked

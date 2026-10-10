@@ -225,6 +225,39 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
     let bitrate = spec.bitrate ?? defaultBitrate
     let codec = parseCodec(spec.codec)
 
+    // Input: single path or playlist. `inputs` wins when both are set;
+    // an unknown transition type degrades to a hard cut (logged) rather
+    // than failing the job.
+    var segments: [RenderEngine.Segment]? = nil
+    var primaryInput: String
+    if let ins = spec.inputs, !ins.isEmpty {
+        segments = ins.map { s in
+            var transition: RenderEngine.Transition? = nil
+            if let t = s.transition {
+                if let kind = RenderEngine.Transition.kind(from: t.type) {
+                    if case .cut = kind {} else {
+                        transition = RenderEngine.Transition(
+                            kind: kind,
+                            duration: t.duration ?? 0.5,
+                            ease: Easing(rawValue: t.ease ?? "linear") ?? .linear
+                        )
+                    }
+                } else {
+                    logLine("[job] warning: unknown transition type '\(t.type)' — using cut")
+                }
+            }
+            return RenderEngine.Segment(
+                url: URL(fileURLWithPath: s.path), transition: transition
+            )
+        }
+        primaryInput = ins[0].path
+    } else if let single = spec.input {
+        primaryInput = single
+    } else {
+        FileHandle.standardError.write(Data("job: spec needs `input` or a non-empty `inputs`\n".utf8))
+        exit(2)
+    }
+
     // grade + bypass — fold tint deg→rad and let bypass set the tint
     // half so user-grade and project-bypass values both apply.
     var grade = MetalVideoEngine.FilterGraph.GradeParams()
@@ -295,9 +328,18 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
                 position: o.anchor ?? 3,  // default bottom-right
                 offset: SIMD2(o.offsetX ?? 0, o.offsetY ?? 0)
             )
+            let anim = o.animate
             overlays.append(.init(
                 texture: tex, rectOrigin: origin, rectSize: size,
-                opacity: o.opacity ?? 1.0
+                opacity: o.opacity ?? 1.0,
+                startSeconds: o.startSeconds, endSeconds: o.endSeconds,
+                opacityTrack: Track.from(anim?.opacity),
+                offsetXTrack: Track.from(anim?.offsetX),
+                offsetYTrack: Track.from(anim?.offsetY),
+                scaleTrack: Track.from(anim?.scale),
+                srcCenterXTrack: Track.from(anim?.srcCenterX),
+                srcCenterYTrack: Track.from(anim?.srcCenterY),
+                srcZoomTrack: Track.from(anim?.srcZoom)
             ))
         }
     }
@@ -334,7 +376,15 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
                 position: t.anchor ?? 9,  // default top-right
                 offset: SIMD2(t.offsetX ?? 0, t.offsetY ?? 0)
             )
-            overlays.append(.init(texture: tex, rectOrigin: origin, rectSize: size))
+            let anim = t.animate
+            overlays.append(.init(
+                texture: tex, rectOrigin: origin, rectSize: size,
+                startSeconds: t.startSeconds, endSeconds: t.endSeconds,
+                opacityTrack: Track.from(anim?.opacity),
+                offsetXTrack: Track.from(anim?.offsetX),
+                offsetYTrack: Track.from(anim?.offsetY),
+                scaleTrack: Track.from(anim?.scale)
+            ))
         }
     }
 
@@ -349,6 +399,34 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
         )
     }
 
+    // Job-level animation: grade/bypass keyframe tracks + whole-frame
+    // fades. Track values convert to engine units here (deg→rad,
+    // percent→fraction) so the evaluator never re-converts per frame.
+    var gradeTracks: GradeTracks? = nil
+    var bypassTracks: BypassTracks? = nil
+    if let a = spec.animate {
+        if let g = a.grade {
+            let t = GradeTracks(
+                brightness: Track.from(g.brightness),
+                contrast: Track.from(g.contrast),
+                saturation: Track.from(g.saturation),
+                tint: Track.from(g.tint),
+                lutMix: Track.from(g.lutMix)
+            )
+            if !t.isEmpty { gradeTracks = t }
+        }
+        if let b = a.bypass {
+            let t = BypassTracks(
+                zoom: Track.from(b.zoom),
+                colorTintRad: Track.from(b.colorTintDeg) { $0 * .pi / 180 },
+                noise: Track.from(b.noise),
+                grain: Track.from(b.grain),
+                edgeBlurSigma: Track.from(b.edgeBlur)
+            )
+            if !t.isEmpty { bypassTracks = t }
+        }
+    }
+
     // Quality profile + peak bitrate — delivery (default) tunes for
     // social-platform re-encoders; draft skips B-frames for faster
     // wall time on preview / batch encodes.
@@ -356,7 +434,7 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
         ? .draft : .delivery
 
     return RenderEngine.Request(
-        inputURL: URL(fileURLWithPath: spec.input),
+        inputURL: URL(fileURLWithPath: primaryInput),
         outputURL: URL(fileURLWithPath: spec.output),
         width: w, height: h, bitrate: bitrate,
         peakBitrate: spec.peakBitrate,
@@ -365,6 +443,11 @@ func buildRenderRequest(_ spec: JobSpec, engine: RenderEngine) throws -> RenderE
         lut: lut,
         libass: libass,
         staticOverlays: overlays,
+        gradeTracks: gradeTracks,
+        bypassTracks: bypassTracks,
+        fadeInSeconds: spec.animate?.fadeInSeconds,
+        fadeOutSeconds: spec.animate?.fadeOutSeconds,
+        segments: segments,
         maxInflight: max(1, spec.maxInflight ?? 5),
         audio: audio
     )

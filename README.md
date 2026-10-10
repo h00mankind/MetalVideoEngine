@@ -30,12 +30,18 @@ the same bytes.
 
 This is NOT a Resolve replacement. It targets a specific render workload:
 
-- single video input
+- single video input, or a playlist of clips joined by transitions
+  (cut, crossfade, dip-to-black, wipe, slide)
 - scale + letterbox to a target resolution (e.g. 1080×1920, 720×1280)
 - color grade: brightness, contrast, saturation, tint, 3D LUT (`.cube`)
 - bypass effects: mirror, zoom, edge blur, grain, noise, hue rotation
+- keyframe animation over grade/bypass values and overlay
+  opacity/position/scale (raw `(t, v, ease)` tracks — the host compiles
+  its named animations; the engine only interpolates)
 - libass subtitle burn (same renderer ffmpeg uses)
-- static logo + CoreText text overlays
+- logo + CoreText text overlays, with visibility windows and Ken Burns
+  pan/zoom on images
+- whole-frame fade in/out
 - H.264 / HEVC mp4 or ProRes 422 HQ mov, social-media bitrates
 - audio passthrough + narration + background music mix
 
@@ -43,7 +49,9 @@ It is faster than the ffmpeg path **for this workload** because it
 eliminates copies, not because the algorithms are fundamentally better.
 
 What's NOT in here: multi-track compositing, edit-list trimming, EDL/XML
-interchange, scopes, ProRes decoding, color management beyond Rec.709.
+interchange, scopes, ProRes decoding, color management beyond Rec.709,
+source-audio crossfades at transitions, animation presets (host-side),
+user-supplied transition shaders.
 
 ## Requirements
 
@@ -148,6 +156,50 @@ schema. A minimal job:
 }
 ```
 
+Animation is keyframes-first: every animatable value takes a raw
+`(t, v, ease)` list (`ease`: `hold` | `linear` | `easeIn` | `easeOut` |
+`easeInOut`, evaluated at output-timeline seconds). Playlists replace
+`input` with `inputs`; a transition on a segment describes the boundary
+into the next one:
+
+```json
+{
+  "inputs": [
+    { "path": "/abs/a.mp4", "transition": { "type": "crossfade", "duration": 0.75 } },
+    { "path": "/abs/b.mp4" }
+  ],
+  "output": "/abs/out.mp4",
+  "preset": "1080p",
+  "texts": [ {
+    "text": "My Channel", "anchor": 8,
+    "startSeconds": 1.0, "endSeconds": 6.0,
+    "animate": {
+      "opacity": [ {"t":1.0,"v":0}, {"t":1.5,"v":1,"ease":"easeOut"} ],
+      "offsetY": [ {"t":1.0,"v":40}, {"t":1.5,"v":0,"ease":"easeOut"} ]
+    }
+  } ],
+  "overlays": [ {
+    "imagePath": "/abs/photo.jpg", "anchor": 5, "widthFraction": 0.8,
+    "startSeconds": 2, "endSeconds": 7,
+    "animate": {
+      "srcZoom":    [ {"t":2,"v":1.0}, {"t":7,"v":1.4,"ease":"easeInOut"} ],
+      "srcCenterX": [ {"t":2,"v":0.4}, {"t":7,"v":0.6} ]
+    }
+  } ],
+  "animate": {
+    "fadeInSeconds": 0.5, "fadeOutSeconds": 0.5,
+    "bypass": { "zoom": [ {"t":0,"v":1.0}, {"t":13,"v":1.08} ] }
+  }
+}
+```
+
+Transition types: `cut`, `crossfade`, `dipToBlack`,
+`wipeLeft`/`wipeRight`/`wipeUp`/`wipeDown`,
+`slideLeft`/`slideRight`/`slideUp`/`slideDown` (directions name the edge
+the incoming clip enters from). Overlapping types shorten the output by
+their duration; narration/music audio plays through transitions
+unaffected.
+
 ```sh
 mve job /abs/path/to/spec.json
 ```
@@ -192,7 +244,13 @@ needed. That mode is useful as a local smoke test. The default fixture is
   are cached.
 - **arm64 only**: Intel Mac builds would need a separate compute path
   (OpenCL or CPU fallback). Not planned.
-- **Single video input**: no multi-track / EDL pipeline.
+- **Sequential playlist, not an NLE**: segments play back-to-back with
+  boundary transitions; no multi-track / EDL pipeline. Playlist and
+  animated jobs run the single-pipeline engine (the parallel chunk
+  engine remains grade-only).
+- **Frame probes don't blend transitions**: `mve frame` inside an
+  overlap window returns the incoming segment unblended — probing needs
+  one frame, transitions need two.
 - **Bridge compatibility**: v0.1.4 fixes the semaphore-dispose trap that
   made older binaries exit non-zero after `[done]`. The Node bridge still
   treats a captured `[done]` line as success for one release so hosts can
@@ -209,6 +267,7 @@ needed. That mode is useful as a local smoke test. The default fixture is
   - `FilterGraph.swift`               — compute pipeline chain
   - `Shaders.swift`                   — runtime-compiled .metal source
   - `LibassRenderer.swift`            — libass → MTLTexture
+  - `Animation.swift`                 — keyframe tracks + easing evaluator
   - `LUT.swift`, `Overlay.swift`,
     `Fonts.swift`, `Job.swift`        — feature modules
   - `Encoder.swift`, `AudioMix.swift` — VT encode + audio mux
