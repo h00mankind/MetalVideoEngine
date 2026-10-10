@@ -110,6 +110,12 @@ export type MetalJobSpec = {
   quality?: 'delivery' | 'draft';
   codec?: 'h264' | 'hevc' | 'prores422hq';
   maxInflight?: number;
+  /**
+   * Render only this part of the output timeline, in seconds. Keyframes,
+   * windows, subtitles and audio keep their output-timeline times. Not
+   * supported when `inputs` has more than one segment.
+   */
+  range?: { startSeconds: number; endSeconds: number };
   grade?: MetalGrade;
   bypass?: MetalBypass;
   lutPath?: string;
@@ -159,7 +165,8 @@ export type MetalDiagnosticKind =
   | 'unknownTransition'
   | 'windowOutsideTimeline'
   | 'keyframeOutsideTimeline'
-  | 'emptyWindow';
+  | 'emptyWindow'
+  | 'invalidRange';
 
 /** One finding of `mve inspect`. */
 export type MetalDiagnostic = {

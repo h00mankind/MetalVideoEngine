@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Render `range`.** `"range": { "startSeconds", "endSeconds" }` in a
+  JobSpec renders only that part of the output timeline. The decoder seeks
+  to the start; keyframes, windows, subtitles, fades, and the audio mix
+  keep their output-timeline times. `[meta] sourceSecs` reports the range
+  length. One segment only: `inputs` with more than one segment and a range
+  fails with `range is not supported with inputs`. `mve inspect` reports range faults
+  as `invalidRange` errors. A JobSpec without `range` takes the same path
+  as before.
 - **`mve strip <spec.json> --from <s> --to <s> --out <png>`.** Contact sheet
   of frame probes: `-n` cells (default 12) at evenly spaced output-timeline
   times on one PNG, each with its time. `--columns` (default 6) and

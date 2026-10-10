@@ -97,6 +97,7 @@ public enum MVEError: Error, CustomStringConvertible {
     case noVideoTrack
     case encodeFailed(OSStatus)
     case writerFailed(String)
+    case invalidRange(String)
 
     public var description: String {
         switch self {
@@ -111,6 +112,7 @@ public enum MVEError: Error, CustomStringConvertible {
         case .noVideoTrack: return "asset has no video track"
         case .encodeFailed(let s): return "encode failed: \(s)"
         case .writerFailed(let m): return "writer failed: \(m)"
+        case .invalidRange(let m): return m
         }
     }
 }

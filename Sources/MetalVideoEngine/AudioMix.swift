@@ -25,6 +25,9 @@ public enum AudioMix {
         public var musicVolume: Float
         /// AAC bitrate for the encoded output (bits/sec).
         public var bitrate: Int
+        /// Keep only this part of the mix, in seconds. Set by the engine
+        /// for a render range. nil = the whole mix.
+        public var trim: Range<Double>?
 
         public init(narrationURL: URL, musicURL: URL? = nil,
                     musicVolume: Float = 0.25, bitrate: Int = 192_000) {
@@ -111,6 +114,23 @@ public enum AudioMix {
     public static func mix(spec: Spec,
                            truncateToNarration: Bool = true,
                            log: (String) -> Void = { _ in }) throws
+        -> (samples: [Float], sampleRate: Double) {
+        let full = try mixWhole(spec: spec, truncateToNarration: truncateToNarration, log: log)
+        guard let trim = spec.trim else { return full }
+        return (trimmed(full.samples, sampleRate: full.sampleRate, to: trim), full.sampleRate)
+    }
+
+    /// The part of interleaved stereo `samples` inside `range` seconds.
+    static func trimmed(_ samples: [Float], sampleRate: Double, to range: Range<Double>) -> [Float] {
+        let frames = samples.count / 2
+        let lo = min(frames, max(0, Int((range.lowerBound * sampleRate).rounded())))
+        let hi = min(frames, max(lo, Int((range.upperBound * sampleRate).rounded())))
+        return Array(samples[(lo * 2)..<(hi * 2)])
+    }
+
+    private static func mixWhole(spec: Spec,
+                                 truncateToNarration: Bool,
+                                 log: (String) -> Void) throws
         -> (samples: [Float], sampleRate: Double) {
         let nar = try decodePCM(url: spec.narrationURL, log: log)
         guard spec.readsMusic, let musicURL = spec.musicURL else {
@@ -384,7 +404,7 @@ public final class MuxWriter: AnyVideoSink {
         }
     }
 
-    public func finish() throws {
+    public func finish(endTime: CMTime?) throws {
         // Audio was scheduled via requestMediaDataWhenReady in init —
         // it feeds itself in the background. Close the video side
         // first, then wait for the audio feeder to drain, then close
@@ -396,6 +416,7 @@ public final class MuxWriter: AnyVideoSink {
         // that state will trap inside AVFoundation (SIGTRAP / exit 133).
         videoInput.markAsFinished()
         audioDoneSem.wait()
+        if let endTime { writer.endSession(atSourceTime: endTime) }
         writer.finishWriting { [weak self] in self?.semaphore.signal() }
         semaphore.wait()
         if writer.status == .failed {

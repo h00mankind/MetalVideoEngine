@@ -305,7 +305,13 @@ func runStrip(argv: [String]) {
 
 func executeJob(_ spec: JobSpec) throws {
     let engine = try RenderEngine()
-    let req = try buildRenderRequest(spec, engine: engine)
+    var req = try buildRenderRequest(spec, engine: engine)
+    if let r = spec.range {
+        guard let range = RenderEngine.RenderRange(startSeconds: r.startSeconds, endSeconds: r.endSeconds) else {
+            throw MVEError.invalidRange("range needs 0 <= startSeconds < endSeconds")
+        }
+        req.range = range
+    }
     // engine.render() prints its own [done] line and the file is on
     // disk by the time it returns. We don't use the returned Stats
     // here — the [done] line is the protocol callers (the Node
