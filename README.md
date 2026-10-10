@@ -204,6 +204,20 @@ the incoming clip enters from). Overlapping types shorten the output by
 their duration; narration/music audio plays through transitions
 unaffected.
 
+**Render a part of the timeline.** Add
+`"range": { "startSeconds": 8, "endSeconds": 10 }` to render only that part
+of the output timeline. The file starts at `startSeconds`. Keyframes,
+visibility windows, subtitles, fades, and the audio mix keep their
+output-timeline times, so the range shows what the full render shows
+there. An `endSeconds` after the end of the timeline stops at the end.
+`[meta] sourceSecs` and the `src=` values are relative to the range, so the
+bridge progress goes from 0 to 1. A range with a playlist (`inputs`) fails
+with `range is not supported with inputs`, and a range that starts at or
+after the end of the timeline fails; both exit 1 and write no file. The
+noise and grain seed counts frames from the start of the range, so a job
+with `noise` or `grain` does not match the full render pixel for pixel.
+`mve frame` and `mve strip` ignore `range`.
+
 ```sh
 mve job /abs/path/to/spec.json
 ```
@@ -254,6 +268,7 @@ line on stderr. `--json` prints only the array of
 | `unknownEase` | error | An `ease` string that the engine does not parse, on a keyframe (one finding per track) or on a transition that the render reads. |
 | `unknownTransition` | error | A transition `type` that is not in the gallery. The engine reads the transition of segment `i` for the boundary into `i + 1` and ignores the last one, so `inspect` does too. A `cut` never reads its `ease`. |
 | `emptyWindow` | error | `endSeconds` is not after `startSeconds`. A missing `startSeconds` counts as 0. |
+| `invalidRange` | error | A `range` with a playlist, with a negative start, with an end that is not after the start, or with a start at or after the end of the output timeline. |
 | `windowOutsideTimeline` | warning | A window starts at or after the end of the output timeline. |
 | `keyframeOutsideTimeline` | warning | A track has a keyframe after the end of the output timeline (one finding per track). |
 

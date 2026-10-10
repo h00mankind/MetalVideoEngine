@@ -262,6 +262,9 @@ public final class RenderEngine {
         /// Optional narration / music audio. Mixed and muxed into the
         /// output alongside the video stream. nil = silent output.
         public var audio: AudioMix.Spec?
+        /// Render only this part of the output timeline. Single-input
+        /// jobs only. nil = the whole timeline.
+        public var range: RenderRange?
 
         public init(
             inputURL: URL,
@@ -283,7 +286,8 @@ public final class RenderEngine {
             fadeOutSeconds: Double? = nil,
             segments: [Segment]? = nil,
             maxInflight: Int = 5,
-            audio: AudioMix.Spec? = nil
+            audio: AudioMix.Spec? = nil,
+            range: RenderRange? = nil
         ) {
             self.inputURL = inputURL; self.outputURL = outputURL
             self.width = width; self.height = height; self.bitrate = bitrate
@@ -300,6 +304,7 @@ public final class RenderEngine {
             self.segments = segments
             self.maxInflight = maxInflight
             self.audio = audio
+            self.range = range
         }
 
         /// The playlist this request renders: explicit segments, or the
@@ -308,6 +313,32 @@ public final class RenderEngine {
             if let s = segments, !s.isEmpty { return s }
             return [Segment(url: inputURL)]
         }
+    }
+
+    /// Part of the output timeline that a render writes. Tracks,
+    /// visibility windows, subtitles, and fades keep their output-timeline
+    /// times; the file starts at `start`.
+    public struct RenderRange: Equatable {
+        public let start: Double
+        public let end: Double
+
+        /// nil for a negative start or an end that is not after the start.
+        public init?(startSeconds: Double, endSeconds: Double) {
+            guard startSeconds.isFinite, endSeconds.isFinite,
+                  startSeconds >= 0, endSeconds > startSeconds else { return nil }
+            start = startSeconds; end = endSeconds
+        }
+
+        public var duration: Double { end - start }
+
+        /// The range cut at the end of a timeline of `seconds`. nil when
+        /// the range starts at or after that end.
+        public func clamped(toTimeline seconds: Double) -> RenderRange? {
+            RenderRange(startSeconds: start, endSeconds: min(end, seconds))
+        }
+
+        /// PTS in the output file of the frame at output-timeline `t`.
+        public func fileSeconds(at t: Double) -> Double { max(0, t - start) }
     }
 
     public struct Stats {
@@ -415,14 +446,33 @@ public final class RenderEngine {
         let offsets = timeline.offsets
         let totalOutSecs = timeline.totalOutSecs
 
+        // A range renders a part of the timeline. Checked before the
+        // writer exists, so a bad range leaves no output file.
+        var range: RenderRange?
+        if let asked = req.range {
+            guard segments.count == 1 else {
+                throw MVEError.invalidRange("range is not supported with inputs")
+            }
+            guard let r = asked.clamped(toTimeline: totalOutSecs) else {
+                throw MVEError.invalidRange(String(
+                    format: "range starts at %.2f s but the output timeline ends at %.2f s",
+                    asked.start, totalOutSecs))
+            }
+            range = r
+        }
+        let writtenSecs = range?.duration ?? totalOutSecs
+
         // Tell consumers (Node bridge, scripts) the total output duration
         // before any frame line fires. They need this to compute a real
         // progress ratio — without it the only signal is the per-frame
         // PTS, which has no denominator. Format is intentionally narrow
         // so the bridge regex is unambiguous.
-        log(String(format: "[meta] sourceSecs=%.3f", totalOutSecs))
+        log(String(format: "[meta] sourceSecs=%.3f", writtenSecs))
 
-        var decoder = try VideoDecoder(url: segments[0].url)
+        var decoder = try range.map {
+            try VideoDecoder(url: segments[0].url,
+                             startAt: CMTime(seconds: $0.start, preferredTimescale: 600))
+        } ?? VideoDecoder(url: segments[0].url)
         let frameRate = Int(decoder.nominalFrameRate.rounded())
         let fps = frameRate > 0 ? frameRate : 30
 
@@ -443,7 +493,8 @@ public final class RenderEngine {
             quality: req.quality
         )
         let writer: any AnyVideoSink
-        if let audioSpec = req.audio {
+        if var audioSpec = req.audio {
+            audioSpec.trim = range.map { $0.start..<$0.end }
             writer = try MuxWriter(
                 url: req.outputURL,
                 video: videoSettings,
@@ -464,6 +515,7 @@ public final class RenderEngine {
             log(String(format: "[engine] playlist: %d segments  out=%.2fs", segments.count, totalOutSecs))
         }
         if req.audio != nil { log("[engine] audio: enabled") }
+        if let r = range { log(String(format: "[engine] range: %.3fs to %.3fs", r.start, r.end)) }
 
         // Created at value 0 and primed with signal()s instead of
         // `value: maxInflight`: libdispatch TRAPS in
@@ -563,6 +615,12 @@ public final class RenderEngine {
                 if segIdx > 0,
                    segOffset + CMTimeGetSeconds(frame.presentationTime) <= lastOutSec + Self.ptsEpsilon {
                     continue
+                }
+                // The decoder opens at the keyframe before the range.
+                if let r = range {
+                    let t = CMTimeGetSeconds(frame.presentationTime)
+                    if t < r.start - Self.ptsEpsilon { continue }
+                    if t >= r.end - Self.ptsEpsilon { break }
                 }
 
                 guard let yTex = ctx.texture(from: frame.pixelBuffer, plane: 0, pixelFormat: .r8Unorm),
@@ -741,10 +799,14 @@ public final class RenderEngine {
 
                 // Output PTS = segment offset + local PTS. CMTimeAdd
                 // reconciles the mixed timescales.
-                let pts = CMTimeAdd(
+                var pts = CMTimeAdd(
                     CMTimeMakeWithSeconds(segOffset, preferredTimescale: 90000),
                     frame.presentationTime
                 )
+                if let r = range {
+                    pts = CMTimeMaximum(.zero, CMTimeSubtract(
+                        pts, CMTimeMakeWithSeconds(r.start, preferredTimescale: 90000)))
+                }
                 let srcPB = frame.pixelBuffer
                 let bHold = bRetain  // immutable copy for the sendable closure
                 cb.addCompletedHandler { _ in
@@ -778,7 +840,7 @@ public final class RenderEngine {
 
         try writer.finish()
         let wall = Date().timeIntervalSince(started)
-        let stats = Stats(framesProcessed: frameCount, wallClockSecs: wall, sourceDurationSecs: totalOutSecs)
+        let stats = Stats(framesProcessed: frameCount, wallClockSecs: wall, sourceDurationSecs: writtenSecs)
         log(String(format: "[done] frames=%d  src=%.2fs  wall=%.2fs  speed=%.2fx",
                    stats.framesProcessed, stats.sourceDurationSecs,
                    stats.wallClockSecs, stats.realtimeRatio))

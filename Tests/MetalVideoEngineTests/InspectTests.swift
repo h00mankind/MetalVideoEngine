@@ -204,6 +204,28 @@ final class InspectTests: XCTestCase {
         XCTAssertEqual(Inspector.outputSeconds(of: s, segmentSeconds: [10, 10]), 20, accuracy: 1e-9)
     }
 
+    func testRangeFaultsAreErrors() throws {
+        let json = """
+        {"inputs":[{"path":"a"},{"path":"b"}],"range":{"startSeconds":1,"endSeconds":2},
+         "output":"/tmp/o.mp4","preset":"1080p"}
+        """
+        let playlist = try JSONDecoder().decode(JobSpec.self, from: Data(json.utf8))
+        XCTAssertEqual(Inspector.specDiagnostics(playlist).map(\.message),
+                       ["range is not supported with inputs"])
+
+        let backward = try spec("\"range\":{\"startSeconds\":5,\"endSeconds\":3}")
+        XCTAssertEqual(subjects(Inspector.specDiagnostics(backward), .invalidRange), ["range"])
+
+        let late = try spec("\"range\":{\"startSeconds\":25,\"endSeconds\":30}")
+        XCTAssertEqual(Inspector.specDiagnostics(late), [])
+        let found = Inspector.timelineDiagnostics(late, outputSeconds: 20)
+        XCTAssertEqual(subjects(found, .invalidRange), ["range.startSeconds"])
+        XCTAssertEqual(found.first?.severity, .error)
+
+        let good = try spec("\"range\":{\"startSeconds\":8,\"endSeconds\":10}")
+        XCTAssertEqual(Inspector.specDiagnostics(good) + Inspector.timelineDiagnostics(good, outputSeconds: 20), [])
+    }
+
     func testSpecWithNoFaultHasNoPureDiagnostics() throws {
         let s = try spec("""
         "texts":[{"text":"Hello","fontName":"Helvetica","startSeconds":1,"endSeconds":6,"animate":{

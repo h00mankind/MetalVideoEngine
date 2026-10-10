@@ -11,6 +11,7 @@ public struct Diagnostic: Codable, Equatable {
         case missingMedia, fontFallback, textClipped
         case unknownEase, unknownTransition
         case windowOutsideTimeline, keyframeOutsideTimeline, emptyWindow
+        case invalidRange
     }
     public enum Severity: String, Codable {
         case error, warning
@@ -94,6 +95,17 @@ public enum Inspector {
         for (i, t) in (spec.texts ?? []).enumerated() {
             checkWindow("texts[\(i)]", t.startSeconds, t.endSeconds)
         }
+
+        if let r = spec.range {
+            if (spec.inputs ?? []).count > 1 {
+                found.append(.init(.invalidRange, .error, subject: "range",
+                                   message: "range is not supported with inputs"))
+            }
+            if RenderEngine.RenderRange(startSeconds: r.startSeconds, endSeconds: r.endSeconds) == nil {
+                found.append(.init(.invalidRange, .error, subject: "range",
+                                   message: "range needs 0 <= startSeconds < endSeconds"))
+            }
+        }
         return found
     }
 
@@ -115,6 +127,12 @@ public enum Inspector {
             found.append(.init(.keyframeOutsideTimeline, .warning, subject: path,
                                message: "keyframe at \(fmt(late)) s is after the output end at \(fmt(end)) s",
                                atSeconds: late))
+        }
+
+        if let r = spec.range, r.startSeconds >= end {
+            found.append(.init(.invalidRange, .error, subject: "range.startSeconds",
+                               message: "range starts at \(fmt(r.startSeconds)) s but the output ends at \(fmt(end)) s",
+                               atSeconds: r.startSeconds))
         }
         return found
     }

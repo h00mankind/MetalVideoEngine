@@ -56,6 +56,16 @@ public struct JobSpec: Codable {
     /// `mve job <spec.json>` this block is ignored.
     public var frame: FrameSpec?
 
+    /// Render only this part of the output timeline (`mve job`). Tracks,
+    /// windows, and subtitles keep their output-timeline times. Not
+    /// supported with `inputs`. `mve frame` and `mve strip` ignore it.
+    public var range: RangeSpec?
+
+    public struct RangeSpec: Codable {
+        public var startSeconds: Double
+        public var endSeconds: Double
+    }
+
     public struct FrameSpec: Codable {
         public var atSeconds: Double
         public var outPath: String      // absolute .png path
