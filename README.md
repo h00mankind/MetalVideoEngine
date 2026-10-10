@@ -229,6 +229,20 @@ The CLI logs progress to stderr in a stable format:
 [done] frames=4080  src=136.49s  wall=20.81s  speed=6.53x
 ```
 
+Before `[done]`, the job logs where the wall time went:
+
+```
+[stages] decode=0.41s gpu=1.92s encode=0.87s
+```
+
+`decode` is the time in the video decoder. `gpu` is the GPU
+execution time of the frame command buffers. `encode` is the time
+in the writer: encoder backpressure, append, and finish. The stages run at
+the same time on different threads, so the values do not add up to the
+wall time. The largest value points at the bottleneck. The Node bridge
+returns the values as `stats.stages` (`decodeSecs`, `gpuSecs`,
+`encodeSecs`).
+
 A job with an `audio` block also logs the levels of the mix it writes:
 
 ```

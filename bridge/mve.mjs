@@ -88,6 +88,8 @@ const DONE_RE = /^\[done\] frames=(\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed
 // `[audio] mix lufs=-18.3 peak=-1.2dBFS clamped=0`, once per job with an
 // audio block. Silence prints `-inf` for lufs and peak.
 const AUDIO_RE = /^\[audio\] mix lufs=(\S+) peak=(\S+)dBFS clamped=(\d+)/;
+// `[stages] decode=0.41s gpu=1.92s encode=0.87s`, once, before `[done]`.
+const STAGES_RE = /^\[stages\] decode=([\d.]+)s gpu=([\d.]+)s encode=([\d.]+)s/;
 
 function finiteOrNull(text) {
   const v = parseFloat(text);
@@ -127,6 +129,7 @@ function runJob(specPath, events) {
   let totalSourceEstimate = 0;
   let finalStats = null;
   let audioLevels = null;
+  let stages = null;
 
   return new Promise((resolve, reject) => {
     const child = spawn(binaryPath(), ['job', specPath], {
@@ -173,6 +176,14 @@ function runJob(specPath, events) {
             clamped: parseInt(a[3], 10),
           };
         }
+        const st = STAGES_RE.exec(line);
+        if (st) {
+          stages = {
+            decodeSecs: parseFloat(st[1]),
+            gpuSecs: parseFloat(st[2]),
+            encodeSecs: parseFloat(st[3]),
+          };
+        }
         const d = DONE_RE.exec(line);
         if (d) {
           finalStats = {
@@ -181,6 +192,7 @@ function runJob(specPath, events) {
             wallSecs: parseFloat(d[3]),
             speed: parseFloat(d[4]),
             ...(audioLevels ? { audio: audioLevels } : {}),
+            ...(stages ? { stages } : {}),
           };
           if (events.onProgress) events.onProgress(1, finalStats.sourceSecs);
         }

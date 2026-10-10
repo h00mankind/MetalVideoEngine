@@ -142,6 +142,20 @@ export type MetalAudioLevels = {
   clamped: number;
 };
 
+/**
+ * Where the wall time of a job went, from the `[stages]` line. The stages
+ * run at the same time on different threads, so the values do not add up
+ * to `wallSecs`. The largest value points at the bottleneck.
+ */
+export type MetalStageTimes = {
+  /** Time in the video decoder. */
+  decodeSecs: number;
+  /** GPU execution time of the frame command buffers. */
+  gpuSecs: number;
+  /** Time in the writer: encoder backpressure, append, and finish. */
+  encodeSecs: number;
+};
+
 export type MetalRunStats = {
   frames: number;
   sourceSecs: number;
@@ -150,6 +164,8 @@ export type MetalRunStats = {
   speed: number;
   /** Present when the job has an `audio` block and the binary reports levels. */
   audio?: MetalAudioLevels;
+  /** Present when the binary logs a `[stages]` line. */
+  stages?: MetalStageTimes;
 };
 
 /**

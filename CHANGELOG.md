@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Stage times.** `mve job` logs `[stages] decode=<s>s gpu=<s>s
+  encode=<s>s` before `[done]`: time in the decoder, GPU execution time of
+  the frame command buffers, and time in the writer. The Node
+  bridge returns the values as `stats.stages`. `[done]` is unchanged.
 - **Audio mix levels.** A job with an `audio` block logs
   `[audio] mix lufs=<LUFS> peak=<dBFS>dBFS clamped=<count>`: integrated
   loudness (ITU-R BS.1770), sample peak, and the number of samples the

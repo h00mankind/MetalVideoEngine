@@ -348,6 +348,10 @@ public final class RenderEngine {
         public var framesProcessed: Int
         public var wallClockSecs: Double
         public var sourceDurationSecs: Double
+        /// Seconds the render spent in each stage; see the `[stages]` line.
+        public var decodeSecs: Double = 0
+        public var gpuSecs: Double = 0
+        public var encodeSecs: Double = 0
         public var realtimeRatio: Double { wallClockSecs > 0 ? sourceDurationSecs / wallClockSecs : 0 }
     }
 
@@ -532,6 +536,10 @@ public final class RenderEngine {
         // Clamped: maxInflight comes from user job JSON unvalidated; 0
         // would deadlock the first wait() and a negative value traps
         // the Range below.
+        // Where the wall time goes: `decode` is time in the decoder,
+        // `gpu` is the GPU execution time of the frame command buffers,
+        // and `encode` is time in the writer (backpressure, append, finish).
+        let decodeTimer = StageTimer(), gpuTimer = StageTimer(), encodeTimer = StageTimer()
         let inflightDepth = max(1, req.maxInflight)
         let inflight = DispatchSemaphore(value: 0)
         for _ in 0..<inflightDepth { inflight.signal() }
@@ -608,7 +616,7 @@ public final class RenderEngine {
                 if let pb = pushback {
                     frame = pb
                     pushback = nil
-                } else if let f = decoder.nextFrame() {
+                } else if let f = decodeTimer.measure({ decoder.nextFrame() }) {
                     frame = f
                 } else {
                     break
@@ -681,7 +689,7 @@ public final class RenderEngine {
                     }
                     let bTime = localSec - (segDur - tr.duration)
                     while true {
-                        if bNext == nil { bNext = pendingDecoder?.nextFrame() }
+                        if bNext == nil { bNext = decodeTimer.measure { pendingDecoder?.nextFrame() } }
                         guard let n = bNext else { break }
                         if CMTimeGetSeconds(n.presentationTime) <= bTime + Self.ptsEpsilon {
                             bCurrent = n
@@ -812,13 +820,14 @@ public final class RenderEngine {
                 }
                 let srcPB = frame.pixelBuffer
                 let bHold = bRetain  // immutable copy for the sendable closure
-                cb.addCompletedHandler { _ in
+                cb.addCompletedHandler { done in
                     defer { inflight.signal() }
+                    gpuTimer.add(nanoseconds: UInt64(max(0, done.gpuEndTime - done.gpuStartTime) * 1e9))
                     _ = srcPB
                     _ = bHold
                     encoderLock.lock()
                     do {
-                        try writer.append(buffer: outPB, pts: pts)
+                        try encodeTimer.measure { try writer.append(buffer: outPB, pts: pts) }
                     } catch {
                         storeError(error)
                     }
@@ -843,11 +852,17 @@ public final class RenderEngine {
 
         // A range ends the file at its end time, not one frame interval
         // after the last frame, so video and trimmed audio agree.
-        try writer.finish(endTime: range.map {
-            CMTimeMakeWithSeconds($0.duration, preferredTimescale: 90000)
-        })
+        try encodeTimer.measure {
+            try writer.finish(endTime: range.map {
+                CMTimeMakeWithSeconds($0.duration, preferredTimescale: 90000)
+            })
+        }
         let wall = Date().timeIntervalSince(started)
-        let stats = Stats(framesProcessed: frameCount, wallClockSecs: wall, sourceDurationSecs: writtenSecs)
+        let stats = Stats(framesProcessed: frameCount, wallClockSecs: wall, sourceDurationSecs: writtenSecs,
+                          decodeSecs: decodeTimer.seconds, gpuSecs: gpuTimer.seconds,
+                          encodeSecs: encodeTimer.seconds)
+        log(String(format: "[stages] decode=%.2fs gpu=%.2fs encode=%.2fs",
+                   stats.decodeSecs, stats.gpuSecs, stats.encodeSecs))
         log(String(format: "[done] frames=%d  src=%.2fs  wall=%.2fs  speed=%.2fx",
                    stats.framesProcessed, stats.sourceDurationSecs,
                    stats.wallClockSecs, stats.realtimeRatio))
@@ -1126,6 +1141,31 @@ public final class RenderEngine {
         guard CGImageDestinationFinalize(dest) else {
             throw MVEError.pipelineStateFailed("renderFrame: PNG finalize failed")
         }
+    }
+}
+
+/// Adds up the elapsed time of one render stage. Safe to call from the
+/// render loop and the command-buffer completion handler at once.
+public final class StageTimer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nanos: UInt64 = 0
+
+    public init() {}
+
+    public func add(nanoseconds: UInt64) {
+        lock.lock(); nanos += nanoseconds; lock.unlock()
+    }
+
+    public var seconds: Double {
+        lock.lock(); defer { lock.unlock() }
+        return Double(nanos) / 1e9
+    }
+
+    /// Run `body` and add its duration, also when it throws.
+    public func measure<T>(_ body: () throws -> T) rethrows -> T {
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        defer { add(nanoseconds: DispatchTime.now().uptimeNanoseconds - t0) }
+        return try body()
     }
 }
 
