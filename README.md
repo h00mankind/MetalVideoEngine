@@ -229,6 +229,20 @@ The CLI logs progress to stderr in a stable format:
 [done] frames=4080  src=136.49s  wall=20.81s  speed=6.53x
 ```
 
+A job with an `audio` block also logs the levels of the mix it writes:
+
+```
+[audio] mix lufs=-16.2 peak=-1.3dBFS clamped=0
+```
+
+`lufs` is the integrated loudness (ITU-R BS.1770), `peak` is the sample
+peak, and `clamped` is the number of samples that the sum of narration and
+music pushed outside full scale. The mix clips those samples. When
+`clamped` is above 0, the job also logs an `[audio] warning` line; decrease
+`audio.musicVolume`. Silence prints `-inf`. With a `range`, the levels
+cover the range only. The measurement does not change the audio. The Node
+bridge returns the values as `stats.audio` (`lufs`, `peakDbfs`, `clamped`).
+
 ### CLI: contact sheet
 
 ```sh

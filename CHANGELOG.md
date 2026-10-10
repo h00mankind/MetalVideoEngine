@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Audio mix levels.** A job with an `audio` block logs
+  `[audio] mix lufs=<LUFS> peak=<dBFS>dBFS clamped=<count>`: integrated
+  loudness (ITU-R BS.1770), sample peak, and the number of samples the
+  narration + music sum pushed outside full scale. A count above 0 adds an
+  `[audio] warning` line. With a `range`, the levels cover the range. The
+  samples that go to the encoder do not change. `AudioMix.mix` returns the
+  count as `clamped`, and the Node bridge returns the levels as
+  `stats.audio`.
 - **Render `range`.** `"range": { "startSeconds", "endSeconds" }` in a
   JobSpec renders only that part of the output timeline. The decoder seeks
   to the start; keyframes, windows, subtitles, fades, and the audio mix

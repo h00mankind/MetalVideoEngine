@@ -85,6 +85,14 @@ export async function binaryAvailable() {
 const META_RE = /^\[meta\] sourceSecs=([\d.]+)/;
 const FRAME_RE = /^\[engine\] frame (\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed=([\d.]+)x/;
 const DONE_RE = /^\[done\] frames=(\d+)\s+src=([\d.]+)s\s+wall=([\d.]+)s\s+speed=([\d.]+)x/;
+// `[audio] mix lufs=-18.3 peak=-1.2dBFS clamped=0`, once per job with an
+// audio block. Silence prints `-inf` for lufs and peak.
+const AUDIO_RE = /^\[audio\] mix lufs=(\S+) peak=(\S+)dBFS clamped=(\d+)/;
+
+function finiteOrNull(text) {
+  const v = parseFloat(text);
+  return Number.isFinite(v) ? v : null;
+}
 
 /**
  * Write the spec to a temp file, run `fn(specPath)`, and always remove
@@ -118,6 +126,7 @@ function runJob(specPath, events) {
   let metaSourceSecs = 0;
   let totalSourceEstimate = 0;
   let finalStats = null;
+  let audioLevels = null;
 
   return new Promise((resolve, reject) => {
     const child = spawn(binaryPath(), ['job', specPath], {
@@ -156,6 +165,14 @@ function runJob(specPath, events) {
             }
           }
         }
+        const a = AUDIO_RE.exec(line);
+        if (a) {
+          audioLevels = {
+            lufs: finiteOrNull(a[1]),
+            peakDbfs: finiteOrNull(a[2]),
+            clamped: parseInt(a[3], 10),
+          };
+        }
         const d = DONE_RE.exec(line);
         if (d) {
           finalStats = {
@@ -163,6 +180,7 @@ function runJob(specPath, events) {
             sourceSecs: parseFloat(d[2]),
             wallSecs: parseFloat(d[3]),
             speed: parseFloat(d[4]),
+            ...(audioLevels ? { audio: audioLevels } : {}),
           };
           if (events.onProgress) events.onProgress(1, finalStats.sourceSecs);
         }
@@ -202,6 +220,7 @@ function runJob(specPath, events) {
         sourceSecs: lastSourceSecs,
         wallSecs: 0,
         speed: 0,
+        ...(audioLevels ? { audio: audioLevels } : {}),
       });
     });
   });
