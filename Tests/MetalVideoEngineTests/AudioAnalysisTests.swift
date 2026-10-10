@@ -69,6 +69,10 @@ final class AudioAnalysisTests: XCTestCase {
         XCTAssertEqual(half, zip(a, b).prefix(a.count / 2).filter { abs($0 + $1) > 1 }.count)
         XCTAssertEqual(windowed, out)
 
+        // A NaN sum is not a clipped sample.
+        var bad: [Float] = [.nan, 0.9, 0.9]
+        XCTAssertEqual(AudioMix.sum(into: &bad, music: [0, 0.9, 0], gain: 1, countIn: 0..<3), 1)
+
         var quiet = a
         XCTAssertEqual(AudioMix.sum(into: &quiet, music: b, gain: 0.1, countIn: 0..<a.count), 0)
     }

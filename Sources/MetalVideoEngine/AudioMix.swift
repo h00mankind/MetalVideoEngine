@@ -132,8 +132,8 @@ public enum AudioMix {
         }
         let samples = spec.trim == nil ? nar.samples : Array(nar.samples[window])
         let levels = AudioAnalysis.measure(samples: samples, sampleRate: nar.sampleRate)
-        log(String(format: "[audio] mix lufs=%.1f peak=%.1fdBFS clamped=%d",
-                   levels.lufs, levels.peakDBFS, clamped))
+        log(String(format: "[audio] mix lufs=%.1f peak=%.1fdBFS", levels.lufs, levels.peakDBFS)
+            + " clamped=\(clamped)")
         if clamped > 0 {
             log("[audio] warning: the mix clips \(clamped) samples; decrease audio.musicVolume")
         }
@@ -163,7 +163,7 @@ public enum AudioMix {
         for i in 0..<n {
             let v = out[i] + music[i] * gain
             let c = max(-1, min(1, v))
-            if c != v, countIn.contains(i) { clamped += 1 }
+            if v > 1 || v < -1, countIn.contains(i) { clamped += 1 }
             out[i] = c
         }
         return clamped
